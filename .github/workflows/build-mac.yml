@@ -19,8 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 说明：编译目标仍是 Java 8（pom 的 java.version=1.8）；
-      # 这里用 JDK 17 编译是为了兼容 macOS 运行器（mac arm64 没有官方 JDK 8）
+      # 编译目标仍是 Java 8（pom 的 java.version=1.8）；
+      # 用 JDK 17 编译是为了兼容 macOS 运行器（mac arm64 没有官方 JDK 8）
       - name: Setup Java 17 (compile target 1.8)
         uses: actions/setup-java@v5
         with:
@@ -33,13 +33,19 @@ jobs:
           node-version: '20'
 
       - name: Build backend jar
-        run: mvn -f server/pom.xml -q -DskipTests package
-
-      - name: Prepare macOS resources (JRE / ffmpeg / whisper / model)
         run: |
-          mkdir -p dist-resources/backend dist-resources/bin/models
+          mvn -f server/pom.xml -q -DskipTests package
+          mkdir -p dist-resources/backend
           cp server/target/ktv-server-0.1.0.jar dist-resources/backend/ktv-server.jar
-          bash scripts/prepare-mac.sh deps
+
+      - name: Prepare JRE 17
+        run: bash scripts/prepare-mac.sh jre
+
+      - name: Prepare ffmpeg + whisper-cli
+        run: bash scripts/prepare-mac.sh tools
+
+      - name: Download whisper model (1.5GB)
+        run: bash scripts/prepare-mac.sh model
 
       - name: Build DMG
         working-directory: desktop

@@ -1,88 +1,131 @@
 #!/usr/bin/env bash
 # macOS 打包准备 + 出包
 # 用法：
-#   bash scripts/prepare-mac.sh          # 本机全流程：准备依赖 + 构建 dmg
-#   bash scripts/prepare-mac.sh deps     # 只准备依赖（GitHub Actions 等 CI 用）
+#   bash scripts/prepare-mac.sh all          # 本机全流程：依赖 + 构建 dmg（默认）
+#   bash scripts/prepare-mac.sh deps         # 准备全部依赖（jar + JRE + 工具 + 模型）
+#   bash scripts/prepare-mac.sh jre|tools|model|build   # 单独一步（CI 分步执行，失败可精确定位）
 # 前置：Node.js + npm、Homebrew
-#      后端 jar 已放在 dist-resources/backend/ktv-server.jar（由 mvn package 构建，跨平台通用）
+#      后端 jar 已放在 dist-resources/backend/ktv-server.jar（mvn package 构建，跨平台通用）
 set -euo pipefail
 cd "$(dirname "$0")/.."                 # → ktv-maker/
 MODE="${1:-all}"
 RES="dist-resources"
 ARCH="$(uname -m)"                      # arm64（Apple Silicon）/ x86_64（Intel）
+JARCH="x64"
+if [ "$ARCH" = "arm64" ]; then JARCH="aarch64"; fi
 
-echo "== 1/5 目录准备 =="
-mkdir -p "$RES/backend" "$RES/bin/models"
+step_dirs() {
+  echo "== 目录准备 =="
+  mkdir -p "$RES/backend" "$RES/bin/models"
+  if [ ! -f "$RES/backend/ktv-server.jar" ]; then
+    echo "!! 缺少后端 jar：$RES/backend/ktv-server.jar"
+    echo "   在项目根执行：mvn -f server/pom.xml -q -DskipTests package"
+    echo "   再执行：cp server/target/ktv-server-0.1.0.jar $RES/backend/ktv-server.jar"
+    exit 1
+  fi
+}
 
-if [ ! -f "$RES/backend/ktv-server.jar" ]; then
-  echo "!! 缺少后端 jar：$RES/backend/ktv-server.jar"
-  echo "   本项目根执行：mvn -f server/pom.xml -q -DskipTests package"
-  echo "   再执行：cp server/target/ktv-server-0.1.0.jar $RES/backend/ktv-server.jar"
-  exit 1
-fi
-
-echo "== 2/5 内置 JRE 17（Adoptium Temurin，$ARCH） =="
-# 说明：macOS arm64 没有官方 Java 8 运行时；后端 jar 编译目标为 Java 8，
-#       在 JRE 17 上运行完全兼容（Spring Boot 2.7 官方支持 JDK 17）。
-if [ ! -x "$RES/backend/jre/bin/java" ]; then
-  if [ "$ARCH" = "arm64" ]; then JARCH="aarch64"; else JARCH="x64"; fi
-  JURL="https://api.adoptium.net/v3/binary/latest/17/ga/mac/${JARCH}/jre/hotspot/normal/eclipse"
-  TMP="$(mktemp -d)"
-  echo "下载 Temurin JRE 17 …"
-  if ! curl -fL "$JURL" -o "$TMP/jre.tar.gz"; then
+step_jre() {
+  echo "== 内置 JRE 17（Adoptium Temurin，$ARCH） =="
+  # 说明：macOS arm64 没有官方 Java 8 运行时；后端 jar 编译目标为 Java 8，
+  #       在 JRE 17 上运行完全兼容（Spring Boot 2.7 官方支持 JDK 17）。
+  if [ -x "$RES/backend/jre/bin/java" ]; then
+    echo "已存在，跳过"
+    return
+  fi
+  local url="https://api.adoptium.net/v3/binary/latest/17/ga/mac/${JARCH}/jre/hotspot/normal/eclipse"
+  local tmp
+  tmp="$(mktemp -d)"
+  echo "下载：$url"
+  if ! curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 900 -o "$tmp/jre.tar.gz" "$url"; then
     echo "!! JRE 下载失败：请到 https://adoptium.net/temurin/releases/?version=17"
     echo "   手动下载 macOS ${JARCH} 的 JRE，解压后把 Contents/Home 放到 $RES/backend/jre"
     exit 1
   fi
-  tar -xzf "$TMP/jre.tar.gz" -C "$TMP"
-  JHOME="$(find "$TMP" -type d -path '*Contents/Home' -maxdepth 4 | head -1)"
-  if [ -n "$JHOME" ]; then mv "$JHOME" "$RES/backend/jre"; else mv "$TMP"/* "$RES/backend/jre"; fi
-  rm -rf "$TMP"
-fi
-chmod +x "$RES/backend/jre/bin/java"
-
-echo "== 3/5 ffmpeg / ffprobe（npm 静态二进制，自动匹配架构） =="
-if [ ! -x "$RES/bin/ffmpeg" ] || [ ! -x "$RES/bin/ffprobe" ]; then
-  ( cd desktop && npm i --no-save ffmpeg-static ffprobe-static )
-  cp desktop/node_modules/ffmpeg-static/ffmpeg "$RES/bin/ffmpeg"
-  FFPROBE="$(find desktop/node_modules/ffprobe-static -type f -name ffprobe -path '*darwin*' | head -1)"
-  [ -n "$FFPROBE" ] || { echo "!! 未找到 darwin 版 ffprobe"; exit 1; }
-  cp "$FFPROBE" "$RES/bin/ffprobe"
-fi
-chmod +x "$RES/bin/ffmpeg" "$RES/bin/ffprobe"
-
-echo "== 4/5 whisper-cli（whisper.cpp） =="
-if [ ! -x "$RES/bin/whisper-cli" ]; then
-  if ! command -v whisper-cli >/dev/null 2>&1; then
-    brew install whisper-cpp
+  tar -xzf "$tmp/jre.tar.gz" -C "$tmp"
+  local jhome
+  jhome="$(find "$tmp" -type d -path '*Contents/Home' -maxdepth 4 -print -quit)"
+  if [ -n "$jhome" ]; then
+    mv "$jhome" "$RES/backend/jre"
+  else
+    mv "$tmp"/* "$RES/backend/jre"
   fi
-  cp "$(command -v whisper-cli)" "$RES/bin/whisper-cli"
-fi
-chmod +x "$RES/bin/whisper-cli"
+  rm -rf "$tmp"
+  chmod +x "$RES/backend/jre/bin/java"
+  "$RES/backend/jre/bin/java" -version 2>&1 | head -1 || true
+}
 
-echo "== 5/5 medium 模型（约 1.5GB，只需下载一次） =="
-if [ ! -f "$RES/bin/models/ggml-medium.bin" ]; then
-  OK=""
-  for URL in \
+step_tools() {
+  echo "== ffmpeg / ffprobe（npm 静态二进制，匹配 $ARCH） =="
+  if [ ! -x "$RES/bin/ffmpeg" ] || [ ! -x "$RES/bin/ffprobe" ]; then
+    ( cd desktop && npm i --no-save ffmpeg-static ffprobe-static )
+    cp desktop/node_modules/ffmpeg-static/ffmpeg "$RES/bin/ffmpeg"
+    local fp="desktop/node_modules/ffprobe-static/bin/darwin/${ARCH}/ffprobe"
+    if [ ! -f "$fp" ]; then
+      fp="$(find desktop/node_modules/ffprobe-static -type f -name ffprobe -print -quit)"
+    fi
+    if [ -z "$fp" ] || [ ! -f "$fp" ]; then
+      echo "!! 未找到 ffprobe 二进制（ffprobe-static 安装可能失败）"
+      exit 1
+    fi
+    cp "$fp" "$RES/bin/ffprobe"
+  fi
+  chmod +x "$RES/bin/ffmpeg" "$RES/bin/ffprobe"
+  "$RES/bin/ffmpeg" -version 2>&1 | head -1 || true
+
+  echo "== whisper-cli（whisper.cpp） =="
+  if [ ! -x "$RES/bin/whisper-cli" ]; then
+    if ! command -v whisper-cli >/dev/null 2>&1; then
+      export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+      if ! brew install whisper-cpp; then
+        echo "首次安装失败，重试一次 …"
+        brew install whisper-cpp
+      fi
+    fi
+    cp "$(command -v whisper-cli)" "$RES/bin/whisper-cli"
+  fi
+  chmod +x "$RES/bin/whisper-cli"
+}
+
+step_model() {
+  echo "== medium 模型（约 1.5GB） =="
+  if [ -f "$RES/bin/models/ggml-medium.bin" ]; then
+    echo "已存在，跳过"
+    return
+  fi
+  local ok=""
+  for url in \
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin" \
     "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"; do
-    echo "下载 ggml-medium.bin ← $URL"
-    if curl -fL --retry 2 -o "$RES/bin/models/ggml-medium.bin" "$URL"; then OK=1; break; fi
+    echo "下载 ggml-medium.bin ← $url"
+    if curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 1800 \
+        -o "$RES/bin/models/ggml-medium.bin" "$url"; then
+      ok=1
+      break
+    fi
   done
-  if [ -z "$OK" ]; then
+  if [ -z "$ok" ]; then
     echo "!! 模型下载失败：请手动下载 ggml-medium.bin 放到 $RES/bin/models/"
     exit 1
   fi
-fi
+  ls -lh "$RES/bin/models/ggml-medium.bin"
+}
 
-if [ "$MODE" = "deps" ]; then
-  echo "== 依赖准备完成（deps 模式，跳过打包） =="
-  exit 0
-fi
+step_build() {
+  echo "== 构建 dmg =="
+  cd desktop
+  npm i
+  npm run dist:mac
+  echo
+  echo "完成！安装包在 ktv-maker/dist/ 下（KFC Music-0.1.0-*.dmg）"
+}
 
-echo "== 构建 dmg =="
-cd desktop
-npm i
-npm run dist:mac
-echo
-echo "完成！安装包在 ktv-maker/dist/ 下（KFC Music-0.1.0-*.dmg）"
+step_dirs
+case "$MODE" in
+  jre)   step_jre ;;
+  tools) step_tools ;;
+  model) step_model ;;
+  deps)  step_jre; step_tools; step_model ;;
+  all)   step_jre; step_tools; step_model; step_build ;;
+  *)     echo "未知模式: $MODE（可用：all | deps | jre | tools | model | build）"; exit 1 ;;
+esac
