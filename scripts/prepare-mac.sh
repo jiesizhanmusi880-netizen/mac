@@ -21,24 +21,22 @@ if [ ! -f "$RES/backend/ktv-server.jar" ]; then
   exit 1
 fi
 
-echo "== 2/5 内置 JRE 8（Azul Zulu，$ARCH） =="
+echo "== 2/5 内置 JRE 17（Adoptium Temurin，$ARCH） =="
+# 说明：macOS arm64 没有官方 Java 8 运行时；后端 jar 编译目标为 Java 8，
+#       在 JRE 17 上运行完全兼容（Spring Boot 2.7 官方支持 JDK 17）。
 if [ ! -x "$RES/backend/jre/bin/java" ]; then
-  if [ "$ARCH" = "arm64" ]; then ZARCH="aarch64"; else ZARCH="x64"; fi
+  if [ "$ARCH" = "arm64" ]; then JARCH="aarch64"; else JARCH="x64"; fi
+  JURL="https://api.adoptium.net/v3/binary/latest/17/ga/mac/${JARCH}/jre/hotspot/normal/eclipse"
   TMP="$(mktemp -d)"
-  OK=""
-  for TYPE in jre jdk; do
-    ZURL="https://api.azul.com/zulu/download/community/v1.0/bundles/latest/?jdk_version=8&os=macos&arch=${ZARCH}&bundle_type=${TYPE}&ext=tar.gz"
-    echo "下载 Zulu ${TYPE} 8 …"
-    if curl -fL "$ZURL" -o "$TMP/zulu.tar.gz"; then OK=1; break; fi
-  done
-  if [ -z "$OK" ]; then
-    echo "!! Zulu 下载失败：请到 https://www.azul.com/downloads/ 手动下载 JRE 8 (macOS $ARCH)"
-    echo "   解压后把 Contents/Home 放到 $RES/backend/jre"
+  echo "下载 Temurin JRE 17 …"
+  if ! curl -fL "$JURL" -o "$TMP/jre.tar.gz"; then
+    echo "!! JRE 下载失败：请到 https://adoptium.net/temurin/releases/?version=17"
+    echo "   手动下载 macOS ${JARCH} 的 JRE，解压后把 Contents/Home 放到 $RES/backend/jre"
     exit 1
   fi
-  tar -xzf "$TMP/zulu.tar.gz" -C "$TMP"
+  tar -xzf "$TMP/jre.tar.gz" -C "$TMP"
   JHOME="$(find "$TMP" -type d -path '*Contents/Home' -maxdepth 4 | head -1)"
-  if [ -n "$JHOME" ]; then mv "$JHOME" "$RES/backend/jre"; else mv "$TMP"/zulu-* "$RES/backend/jre"; fi
+  if [ -n "$JHOME" ]; then mv "$JHOME" "$RES/backend/jre"; else mv "$TMP"/* "$RES/backend/jre"; fi
   rm -rf "$TMP"
 fi
 chmod +x "$RES/backend/jre/bin/java"
