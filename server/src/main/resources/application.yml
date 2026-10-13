@@ -1,0 +1,38 @@
+server:
+  port: 8787
+  address: 127.0.0.1
+
+spring:
+  application:
+    name: ktv-server
+  servlet:
+    multipart:
+      max-file-size: 2048MB
+      max-request-size: 2048MB
+      file-size-threshold: 8MB
+  jackson:
+    default-property-inclusion: non_null
+
+ktv:
+  # 项目数据目录（每个项目一个子目录，不使用数据库）
+  data-dir: ./data
+  # 外部工具目录：ffmpeg.exe / ffprobe.exe / whisper-cli.exe / models/
+  bin-dir: ../bin
+  whisper:
+    # 模型文件名（放在 bin/models/ 下）
+    model: ggml-medium.bin
+    threads: 8
+    language: zh
+    # DTW 词级时间戳，KTV 逐字高亮依赖它
+    dtw: true
+  ffmpeg:
+    video-codec: libx264
+    crf: 18
+    preset: medium
+
+logging:
+  level:
+    root: info
+    com.songmu.ktv: debug
+  file:
+    name: ./data/ktv-server.log

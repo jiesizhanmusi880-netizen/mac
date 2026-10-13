@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>KTV Stage</title>
+<style>
+  /* 歌暮自带字体（本地资源，仅供本机使用） */
+  @font-face { font-family: '抖音美好体'; src: url('../../assets/fonts/douyin-meihao-bold.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '得意黑'; src: url('../../assets/fonts/deyihei-oblique.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: 'MiSans Heavy'; src: url('../../assets/fonts/misans-heavy.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '霞鹜漫黑'; src: url('../../assets/fonts/lxgw-manhei.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '851 马克笔体'; src: url('../../assets/fonts/851-marker.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '站酷快乐体'; src: url('../../assets/fonts/zcool-kuaile.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '思源宋体 Bold'; src: url('../../assets/fonts/source-han-serif-bold.otf') format('opentype'); font-display: block; }
+  @font-face { font-family: '汉仪尚巍手书'; src: url('../../assets/fonts/hanyi-shangwei.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '默陌信笺手写'; src: url('../../assets/fonts/momo-letter.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '华康海报体'; src: url('../../assets/fonts/huakang-poster.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '方正童体毛笔'; src: url('../../assets/fonts/fangzheng-brush.ttf') format('truetype'); font-display: block; }
+  @font-face { font-family: '田英章毛笔楷书'; src: url('../../assets/fonts/tianyingzhang-kai.ttf') format('truetype'); font-display: block; }
+
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #08080c;
+  }
+  /* 背景层：图片 / 视频由 DOM 渲染（避免 canvas 跨源污染） */
+  #bgLayer {
+    position: absolute; inset: 0; overflow: hidden;
+    background: linear-gradient(135deg, #0a0a12, #12121e 50%, #07070d);
+  }
+  #bgLayer .bg-media {
+    position: absolute; left: 50%; top: 50%;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: translate(-50%, -50%) scale(1);
+    transform-origin: center center;
+  }
+  #bgLayer .bg-dim {
+    position: absolute; inset: 0; background: rgba(0, 0, 0, .22);
+  }
+  /* 字幕层：透明 canvas 叠在背景上 */
+  #cv {
+    position: absolute; inset: 0; display: block;
+    width: 100%; height: 100%;
+  }
+</style>
+</head>
+<body>
+<div id="bgLayer"></div>
+<canvas id="cv" width="1920" height="1080"></canvas>
+<script>
+'use strict';
+
+/**
+ * KTV 字幕舞台
+ * - 背景：DOM 层（img / video / 帧序列），由浏览器合成，截图/录像都能捕获
+ * - 素材按「片段」出现：只在片段的 [start, end) 内显示，播放头越过后回到空背景
+ * - 字幕：透明 canvas 双行错位排版，每屏最多两行、一组唱完才切下一组 ——
+ *   第一行左边缘贴左边距、第二行右边缘贴右边距；单行句相邻两句一组；
+ *   超长句自行折行时整句独占一组（先上行后下行「原位」接唱）；
+ *   同组共用一组字号 / 字距 / 描边 / 阴影 / 淡入淡出参数，预览与逐帧导出共用 renderAt(time)
+ */
+const CV = document.getElementById('cv');
+const ctx = CV.getContext('2d');
+const bgLayer = document.getElementById('bgLayer');
+
+const state = {
+  width: 1920,
+  height: 1080,
+  fps: 30,
+  duration: 0,
+  cues: [],
+  template: defaultTemplate(),
+  /** 背景：segments 为素材片段列表，layers 为按片段懒创建的 DOM 图层 */
+  background: { kind: 'none', segments: [], layers: {}, activeKey: null, signature: '' },
+  /** 宿主（父页音频）是否在播放：未播放时背景视频 / 动画一律保持静止 */
+  mediaPlaying: true,
+  playing: false,
+  playStartWall: 0,
+  playStartTime: 0,
+  raf: 0,
+  /** 字幕组缓存：{ cues, key, groups }，歌词或折行参数变化时重建 */
+  blockCache: null,
+};
+
+function defaultTemplate() {
+  return {
+    fontFamily: '抖音美好体',
+    fontSize: 95,
+    letterSpacing: 10,
+    playedColorMode: 'gradient',
+    playedSolidColor: '#B721FF',
+    gradientStart: '#A900B2',
+    gradientMiddle: '#6651D0',
+    gradientEnd: '#23A2EE',
+    unplayedColor: '#FFFFFF',
+    strokeEnabled: true,
+    strokeColor: '#000000',
+    strokeWidth: 5,
+    shadowEnabled: true,
+    shadowColor: '#000000',
+    shadowBlur: 8,
+    shadowDistance: 6,
+    fadeEnabled: true,
+    fadeInDuration: 0.3,
+    fadeOutDuration: 0.5,
+    maxChars: 15,
+    lineGap: 110,
+    bottomMargin: 160,
+  };
+}
+
+/* ============ 对外 API ============ */
+
+const Stage = {
+  async setup(config) {
+    if (!config) return true;
+    if (config.width) state.width = config.width;
+    if (config.height) state.height = config.height;
+    if (config.fps) state.fps = config.fps;
+    if (typeof config.duration === 'number') state.duration = config.duration;
+    if (config.cues) state.cues = config.cues;
+    if (config.template) state.template = Object.assign(defaultTemplate(), config.template);
+    if (typeof config.mediaPlaying === 'boolean') state.mediaPlaying = config.mediaPlaying;
+    if (config.background) {
+      await setBackground(config.background);
+    }
+    CV.width = state.width;
+    CV.height = state.height;
+    // 重新配置后保持当前时间点（导出时 currentTime() 为 0，与旧行为一致）
+    await this.renderAt(this.currentTime());
+    return true;
+  },
+
+  setTemplate(template) {
+    state.template = Object.assign(defaultTemplate(), template || {});
+    return this.renderAt(this.currentTime());
+  },
+
+  /** 渲染指定时刻（导出时逐帧调用） */
+  async renderAt(time) {
+    await updateBackgroundTime(time);
+    drawCanvas(time);
+    return true;
+  },
+
+  seek(time, playing) {
+    if (typeof playing === 'boolean') state.mediaPlaying = playing;
+    state.playStartTime = time;
+    state.playStartWall = performance.now();
+    this.renderAt(time);
+  },
+
+  play() {
+    if (state.playing) return;
+    state.playing = true;
+    state.mediaPlaying = true;
+    state.playStartWall = performance.now();
+    state.playStartTime = this.currentTime();
+    // 背景视频由 renderAt → updateBackgroundTime 按片段播放，这里不直接操作元素
+    const tick = () => {
+      if (!state.playing) return;
+      const t = this.currentTime();
+      if (t >= state.duration) {
+        state.playing = false;
+        this.renderAt(state.duration);
+        report({ type: 'ended' });
+        return;
+      }
+      this.renderAt(t);
+      report({ type: 'time', time: t });
+      state.raf = requestAnimationFrame(tick);
+    };
+    state.raf = requestAnimationFrame(tick);
+  },
+
+  pause() {
+    state.playing = false;
+    state.mediaPlaying = false;
+    if (state.raf) cancelAnimationFrame(state.raf);
+    state.raf = 0;
+    pauseBackgroundVideos();
+    report({ type: 'time', time: this.currentTime() });
+  },
+
+  currentTime() {
+    if (!state.playing) return state.playStartTime;
+    return state.playStartTime + (performance.now() - state.playStartWall) / 1000;
+  },
+};
+
+window.Stage = Stage;
+
+function report(payload) {
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage(Object.assign({ source: 'ktv-stage' }, payload), '*');
+    }
+  } catch (err) { /* 忽略 */ }
+}
+
+window.addEventListener('message', (event) => {
+  const data = event.data || {};
+  if (data.type === 'stage:setup') Stage.setup(data.config);
+  else if (data.type === 'stage:seek') Stage.seek(data.time, data.playing);
+  else if (data.type === 'stage:play') Stage.play();
+  else if (data.type === 'stage:pause') Stage.pause();
+  else if (data.type === 'stage:template') Stage.setTemplate(data.template);
+  else if (data.type === 'stage:renderAt') Stage.renderAt(data.time);
+});
+
+/* 预览区获得焦点时，把退格 / Delete 转发给父窗口（用于删除选中素材） */
+window.addEventListener('keydown', (event) => {
+  const key = event.key;
+  if (key !== 'Backspace' && key !== 'Delete' && key !== 'Escape') return;
+  report({ type: 'key', key: key });
+});
+
+/* ============ 背景（DOM 层：按素材片段的时间段出现） ============ */
+
+/** 背景配置签名：一致时复用已加载的图层，避免重建造成闪白 */
+function backgroundSignature(bg) {
+  if (!bg || !bg.kind || bg.kind === 'none') return 'none';
+  if (bg.kind === 'segments') {
+    return 'segments|' + (bg.segments || []).map((s) => [
+      s.start, s.end, s.srcIn || 0, s.kind || 'image',
+      s.url || s.imageUrl || s.videoUrl || '', s.framesDir || '', s.frameCount || 0,
+    ].join(',')).join(';');
+  }
+  return [bg.kind, bg.imageUrl || '', bg.videoUrl || '', bg.framesDir || '', bg.frameCount || 0].join('|');
+}
+
+async function setBackground(bg) {
+  const signature = backgroundSignature(bg);
+  if (signature === state.background.signature) return;   // 配置未变：保留现成图层
+  destroyBackgroundLayers();
+  state.background = { kind: (bg && bg.kind) || 'none', segments: [], layers: {}, activeKey: null, signature: signature };
+  if (!bg || !bg.kind || bg.kind === 'none') return;
+
+  let segments = [];
+  if (bg.kind === 'segments' && Array.isArray(bg.segments)) {
+    segments = bg.segments.map((s) => ({
+      start: Number(s.start) || 0,
+      end: Number(s.end) || 0,
+      srcIn: Math.max(0, Number(s.srcIn) || 0),
+      kind: s.kind === 'video' ? 'video' : (s.kind === 'frames' ? 'frames' : 'image'),
+      url: s.url || s.imageUrl || s.videoUrl || '',
+      framesDir: s.framesDir || '',
+      frameCount: Number(s.frameCount) || 0,
+      mediaId: s.mediaId ? String(s.mediaId) : '',
+    })).filter((s) => s.end > s.start);
+  } else if (bg.kind === 'frames' && bg.framesDir) {
+    // 旧式单素材背景：整首歌静态显示
+    segments = [{ start: 0, end: Infinity, srcIn: 0, kind: 'frames', url: '', framesDir: bg.framesDir, frameCount: Number(bg.frameCount) || 0, mediaId: '' }];
+  } else {
+    const url = bg.imageUrl || bg.videoUrl || '';
+    if (!url) return;
+    segments = [{
+      start: 0, end: Infinity, srcIn: 0,
+      kind: bg.kind === 'video' ? 'video' : 'image',
+      url: url, framesDir: '', frameCount: 0, mediaId: '',
+    }];
+  }
+
+  segments.sort((a, b) => a.start - b.start);
+  state.background.segments = segments;
+
+  // 预建所有片段的图层（都是本地文件，代价很小）并等就绪，
+  // 保证 setup 之后的第一帧、以及导出逐帧都不会截到空白
+  await Promise.all(segments.map((seg, index) => waitLayerReady(ensureBackgroundLayer(seg, index))));
+}
+
+/** 等待图层可显示（图片 onload / 视频有数据），超时兜底不阻塞渲染 */
+function waitLayerReady(layer) {
+  const element = layer && layer.element;
+  if (!element) return Promise.resolve();
+  const isVideo = element.tagName === 'VIDEO';
+  if (isVideo ? element.readyState >= 2 : element.complete) return Promise.resolve();
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      resolve();
+    };
+    element.addEventListener('load', finish, { once: true });
+    element.addEventListener('loadeddata', finish, { once: true });
+    element.addEventListener('error', finish, { once: true });
+    setTimeout(finish, 1500);
+  });
+}
+
+function destroyBackgroundLayers() {
+  const layers = state.background.layers || {};
+  Object.keys(layers).forEach((key) => {
+    const layer = layers[key];
+    if (layer.element) {
+      if (layer.element.tagName === 'VIDEO') {
+        try { layer.element.pause(); } catch (err) { /* ignore */ }
+      }
+      layer.element.remove();
+    }
+    if (layer.dim) layer.dim.remove();
+  });
+  state.background.layers = {};
+  state.background.activeKey = null;
+}
+
+function pauseBackgroundVideos() {
+  const layers = state.background.layers || {};
+  Object.keys(layers).forEach((key) => {
+    const element = layers[key].element;
+    if (element && element.tagName === 'VIDEO' && !element.paused) {
+      try { element.pause(); } catch (err) { /* ignore */ }
+    }
+  });
+}
+
+/** 当前时间所在的片段：越过片段末尾（或还没到片段起点）就没有背景 */
+function activeSegmentAt(time) {
+  const list = state.background.segments || [];
+  for (let i = 0; i < list.length; i++) {
+    if (time >= list[i].start - 0.0005 && time < list[i].end) return { seg: list[i], index: i };
+  }
+  return null;
+}
+
+function segmentKey(seg, index) {
+  return (seg.mediaId || 'seg') + '#' + index + '|' + (seg.url || seg.framesDir || '');
+}
+
+/** 懒创建图层：同一片段只建一次元素，切换片段不会重新下载素材 */
+function ensureBackgroundLayer(seg, index) {
+  const key = segmentKey(seg, index);
+  const layers = state.background.layers;
+  if (layers[key]) return layers[key];
+
+  let element = null;
+  if (seg.kind === 'video') {
+    element = document.createElement('video');
+    element.muted = true;
+    element.loop = false;                 // 素材放完即定格，不循环
+    element.playsInline = true;
+    element.preload = 'auto';
+    element.src = seg.url;
+  } else if (seg.kind === 'frames') {
+    element = document.createElement('img');
+  } else {
+    element = document.createElement('img');
+    element.src = seg.url;
+  }
+  element.className = 'bg-media';
+  element.style.opacity = '0';
+  element.style.transition = 'opacity .18s linear';
+  element.style.display = 'none';
+
+  const layer = { key: key, kind: seg.kind, element: element, dim: null, visible: false };
+  const reveal = () => { element.style.opacity = '1'; };
+  element.addEventListener('load', reveal, { once: true });
+  element.addEventListener('loadeddata', reveal, { once: true });
+  element.addEventListener('error', () => {
+    // 素材加载失败：保持透明，避免露出裂图 / 只留一层压暗
+    element.style.opacity = '0';
+    if (layer.dim) layer.dim.style.display = 'none';
+  });
+
+  const dim = document.createElement('div');
+  dim.className = 'bg-dim';
+  dim.style.display = 'none';
+  bgLayer.appendChild(element);
+  bgLayer.appendChild(dim);
+  layer.dim = dim;
+
+  layers[key] = layer;
+  return layer;
+}
+
+function setLayerVisible(layer, visible) {
+  if (layer.visible === visible) return;
+  layer.visible = visible;
+  const value = visible ? '' : 'none';
+  if (layer.element) layer.element.style.display = value;
+  if (layer.dim) layer.dim.style.display = value;
+  if (!visible && layer.element && layer.element.tagName === 'VIDEO') {
+    try { layer.element.pause(); } catch (err) { /* ignore */ }
+  }
+}
+
+function hideAllLayers() {
+  const layers = state.background.layers || {};
+  Object.keys(layers).forEach((key) => setLayerVisible(layers[key], false));
+  state.background.activeKey = null;
+}
+
+/** 精确定位视频帧：暂停 / 导出逐帧时等待 seek 完成（带超时兜底） */
+function seekVideo(element, target) {
+  if (element.readyState < 1) return Promise.resolve();   // 还没有元数据，交给 loadedmetadata 补定位
+  if (Math.abs(element.currentTime - target) <= 0.04) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      element.removeEventListener('seeked', finish);
+      resolve();
+    };
+    element.addEventListener('seeked', finish);
+    try { element.currentTime = target; } catch (err) { finish(); }
+    setTimeout(finish, 400);
+  });
+}
+
+/** 按时间推进背景：只在片段的时间段内显示，视频校正漂移、图片慢推、帧序列换帧 */
+async function updateBackgroundTime(time) {
+  const bg = state.background;
+  if (!bg.segments || !bg.segments.length) return;
+
+  const found = activeSegmentAt(time);
+  if (!found) {
+    // 播放头已经越过素材片段（或尚未进入任何片段）：不显示素材
+    hideAllLayers();
+    return;
+  }
+
+  const seg = found.seg;
+  const layer = ensureBackgroundLayer(seg, found.index);
+  const layers = bg.layers;
+  Object.keys(layers).forEach((key) => {
+    if (key !== layer.key) setLayerVisible(layers[key], false);
+  });
+  setLayerVisible(layer, true);
+  bg.activeKey = layer.key;
+
+  // 片段内本地时间 → 素材源时间（srcIn 为裁剪后的源入点）
+  const localSrc = Math.max(0, (seg.srcIn || 0) + (time - seg.start));
+
+  if (layer.kind === 'video') {
+    const element = layer.element;
+    layer.wantSrc = localSrc;          // 素材源时间：元数据就绪后按最新值定位
+    if (element.readyState < 1) {
+      // 元数据还没到：记下目标时间，加载完立即定位到片段对应的那一帧
+      if (!layer.pendingSrc) {
+        layer.pendingSrc = true;
+        element.addEventListener('loadedmetadata', () => {
+          layer.pendingSrc = false;
+          const dur = element.duration || 0;
+          const want = dur > 0 ? Math.min(layer.wantSrc || 0, Math.max(0, dur - 0.04)) : (layer.wantSrc || 0);
+          try { element.currentTime = want; } catch (err) { /* ignore */ }
+          if (state.mediaPlaying) element.play().catch(() => {});
+        }, { once: true });
+        try { element.load(); } catch (err) { /* ignore */ }
+      }
+      return;
+    }
+    const dur = element.duration || 0;
+    const target = dur > 0 ? Math.min(localSrc, Math.max(0, dur - 0.04)) : localSrc;
+    if (state.mediaPlaying) {
+      if (element.paused) element.play().catch(() => {});
+      if (Math.abs(element.currentTime - target) > 0.35) {
+        try { element.currentTime = target; } catch (err) { /* ignore */ }
+      }
+    } else {
+      // 未播放：视频保持静止，仅定位到当前时间点对应的画面
+      if (!element.paused) {
+        try { element.pause(); } catch (err) { /* ignore */ }
+      }
+      await seekVideo(element, target);
+    }
+    return;
+  }
+
+  if (layer.kind === 'frames') {
+    const count = seg.frameCount || 0;
+    if (count <= 0) return;
+    const index = Math.min(count, Math.max(1, Math.floor(localSrc * state.fps) + 1));
+    const url = seg.framesDir + String(index).padStart(6, '0') + '.jpg';
+    const element = layer.element;
+    if (element.getAttribute('src') !== url) {
+      element.src = url;
+      try {
+        if (element.decode) await element.decode();
+      } catch (err) { /* 解码失败则跳过 */ }
+    }
+    return;
+  }
+
+  // 图片：Ken Burns 慢推，按片段内本地时间计时（越过后立即停显）
+  const element = layer.element;
+  if (element.getAttribute('src') !== seg.url) element.src = seg.url;
+  const period = 12;
+  const phase = (Math.sin((Math.max(0, time - seg.start) / period) * Math.PI * 2) + 1) / 2;
+  const zoom = 1.04 + phase * 0.06;
+  element.style.transform = 'translate(-50%, -50%) scale(' + zoom.toFixed(4) + ')';
+}
+
+/* ============ 字幕绘制（canvas 透明层） ============ */
+
+function drawCanvas(time) {
+  const W = state.width;
+  const H = state.height;
+  const scale = H / 1080;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  drawLyrics(time, W, H, scale);
+  drawInfoOverlay(W, H, scale);
+}
+
+/** 画面叠加信息：左上歌名 · 歌手，右上 DJ 名字 */
+function drawInfoOverlay(W, H, scale) {
+  const tpl = state.template;
+  if (!tpl || tpl.overlayInfoEnabled === false) return;
+  const left = [];
+  if (tpl.nameText) left.push(tpl.nameText);
+  if (tpl.singerText) left.push(tpl.singerText);
+  if (!left.length && !tpl.djText) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.92;
+  ctx.font = Math.round(30 * scale) + 'px "' + (tpl.fontFamily || 'Microsoft YaHei') + '", "Microsoft YaHei", sans-serif';
+  ctx.textBaseline = 'top';
+  ctx.shadowColor = 'rgba(0, 0, 0, .85)';
+  ctx.shadowBlur = 6 * scale;
+  ctx.shadowOffsetY = 2 * scale;
+  ctx.fillStyle = '#ffffff';
+
+  if (left.length) {
+    ctx.textAlign = 'left';
+    ctx.fillText(left.join(' · '), 48 * scale, 40 * scale);
+  }
+  if (tpl.djText) {
+    ctx.textAlign = 'right';
+    ctx.fillText(tpl.djText, W - 48 * scale, 40 * scale);
+  }
+  ctx.restore();
+}
+
+/**
+ * 双行错位排版（每屏最多两行 · 原位续唱）：
+ * - 上一槽位 = 组内先唱的那行：逐字扫色，整体向左错开、位置更高；唱完保持已唱色不再移动
+ * - 下一槽位 = 组内后唱的那行：整体向右错开、位置更低，轮到它时「在原位」逐字扫色（不挪到左上槽位）
+ * - 组内两行都唱完，整组才切换到下一组，避免换句时文字跳动
+ * 组内的行已按 maxChars 折好（超长句折成的两行同组），最下面一行固定在 baseY。
+ */
+function drawLyrics(time, W, H, scale) {
+  const tpl = state.template;
+  const block = activeBlock(time);
+  if (!block) return;
+
+  const alpha = blockAlpha(time, block, tpl);
+  if (alpha <= 0) return;
+
+  const fontPx = tpl.fontSize * scale;
+  const bottom = tpl.bottomMargin * scale;
+  const lineGap = tpl.lineGap * scale;
+
+  ctx.font = 'bold ' + fontPx + 'px "' + tpl.fontFamily + '", "Microsoft YaHei", sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+
+  ctx.globalAlpha = alpha;
+  const baseY = H - bottom;
+
+  // 组内第一行固定占上一槽位、第二行占下一槽位；组内只剩一行时占上一槽位（位置不跳）
+  for (let i = block.members.length - 1; i >= 0; i--) {
+    const row = block.members[i];
+    const width = measureRow(row, scale);
+    const shift = staggerShift(i === 0 ? 'first' : 'second', width, W, scale);
+    // 已开始（含已唱完）的行逐字扫色；尚未轮到的行保持未唱色等待接唱
+    const started = time >= (row.start || 0) - 0.001;
+    drawRow(row, baseY - (1 - i) * lineGap, time, W, scale, shift, started);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** 一行字符的总宽度（含字距，与绘制保持一致） */
+function measureRow(row, scale) {
+  const spacing = state.template.letterSpacing * scale;
+  return row.chars.reduce((sum, item) => sum + ctx.measureText(item.ch).width + spacing, 0);
+}
+
+/** 字幕左右安全边距（1080p 像素）：第一行贴左边距、第二行贴右边距 */
+const SUBTITLE_SIDE_MARGIN = 48;
+
+/**
+ * 错位落点：组内第一行的左边缘贴左边距、第二行的右边缘贴右边距（左右贴边错位）；
+ * 行宽超出可用宽度时退回居中，避免文字出画。
+ */
+function staggerShift(slot, width, W, scale) {
+  const margin = SUBTITLE_SIDE_MARGIN * scale;
+  if (width >= W - margin * 2) return 0;                     // 行太宽：居中显示
+  const centered = (W - width) / 2;
+  const target = slot === 'second' ? W - margin - width : margin;
+  return target - centered;
+}
+
+/** 行内逐字绘制：未唱层 + 已唱层（按扫色进度裁剪）；sweep 为 false 时整行未唱色（尚未轮到的句子） */
+function drawRow(row, y, time, W, scale, shiftX, sweep) {
+  const tpl = state.template;
+  const fontPx = tpl.fontSize * scale;
+  const spacing = tpl.letterSpacing * scale;
+
+  const items = row.chars;
+  if (!items.length) return;
+
+  const widths = items.map((it) => ctx.measureText(it.ch).width + spacing);
+  const total = widths.reduce((a, b) => a + b, 0);
+  let x = (W - total) / 2 + (shiftX || 0);
+
+  const playedStyle = tpl.playedColorMode === 'solid'
+    ? tpl.playedSolidColor
+    : rowGradient(x, y, total);
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const w = widths[i];
+    const cx = x + w / 2;
+
+    paintChar(item.ch, cx, y, tpl.unplayedColor);
+
+    if (sweep) {
+      const p = charProgress(item, time);
+      if (p > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y - fontPx, w * p, fontPx * 2.4);
+        ctx.clip();
+        paintChar(item.ch, cx, y, playedStyle);
+        ctx.restore();
+      }
+    }
+
+    x += w;
+  }
+}
+
+/** 已唱颜色渐变：色带跟随该行位置（错位后依然贴合文字） */
+function rowGradient(x, y, total) {
+  const tpl = state.template;
+  const grad = ctx.createLinearGradient(x, y, x + total, y);
+  grad.addColorStop(0, tpl.gradientStart);
+  grad.addColorStop(0.5, tpl.gradientMiddle);
+  grad.addColorStop(1, tpl.gradientEnd);
+  return grad;
+}
+
+function paintChar(ch, cx, cy, fillStyle) {
+  const tpl = state.template;
+  const scale = state.height / 1080;
+
+  ctx.save();
+  if (tpl.shadowEnabled) {
+    const rad = (tpl.shadowAngle || 90) * Math.PI / 180;
+    ctx.shadowColor = hexWithAlpha(tpl.shadowColor, tpl.shadowOpacity === undefined ? 0.7 : tpl.shadowOpacity);
+    ctx.shadowBlur = tpl.shadowBlur * scale;
+    ctx.shadowOffsetX = Math.cos(rad) * tpl.shadowDistance * scale;
+    ctx.shadowOffsetY = Math.sin(rad) * tpl.shadowDistance * scale;
+  }
+  if (tpl.strokeEnabled && tpl.strokeWidth > 0) {
+    ctx.lineJoin = 'round';
+    ctx.miterLimit = 2;
+    ctx.lineWidth = tpl.strokeWidth * scale * 2;
+    ctx.strokeStyle = tpl.strokeColor;
+    ctx.strokeText(ch, cx, cy);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+  }
+  ctx.fillStyle = fillStyle;
+  ctx.fillText(ch, cx, cy);
+  ctx.restore();
+}
+
+/* ============ 时间与文本 ============ */
+
+/** 相邻句间隔小于该秒数视为「连唱」：不作淡入淡出，避免双行换句时闪断 */
+const CONTINUOUS_GAP_SEC = 1.0;
+
+/**
+ * 字幕组（每屏最多两行）：
+ * - 普通单行句：相邻两句一组（组内第一句左上槽位、第二句右下槽位）；
+ * - 超长句自行折行（最多两行）：整句独占一组，两行同屏，先上行后下行「原位」接唱；
+ * - 一组唱完才切到下一组，所以每屏恒定不超过两行，也不会出现换句跳动。
+ * 组的行范围 [startTime, endTime] 与前后组的间隔用于判断连唱 / 段落。
+ */
+function buildSubtitleBlocks() {
+  const tpl = state.template;
+
+  // 先按 maxChars 折行：每行带上自己的时间范围（由该行首尾字符的逐字时间推出）
+  const rowsOfCue = state.cues.map((cue) => {
+    return splitRows(cue, tpl.maxChars).reduce((rows, row) => {
+      const chars = row.chars || [];
+      if (chars.length) {
+        rows.push({
+          chars: chars,
+          start: Number(chars[0].start) || Number(cue.start) || 0,
+          end: Number(chars[chars.length - 1].end) || Number(cue.end) || 0,
+        });
+      }
+      return rows;
+    }, []);
+  });
+
+  // 成组：最多两行，且同一句折出来的两行不会被拆到两组
+  const groups = [];
+  let pending = [];
+  rowsOfCue.forEach((rows) => {
+    if (!rows.length) return;
+    if (pending.length && pending.length + rows.length > 2) {
+      groups.push(pending);
+      pending = [];
+    }
+    pending = pending.concat(rows);
+    if (pending.length >= 2) {
+      groups.push(pending);
+      pending = [];
+    }
+  });
+  if (pending.length) groups.push(pending);
+
+  return groups.map((members, index, all) => {
+    const prev = index > 0 ? all[index - 1] : null;
+    const next = index + 1 < all.length ? all[index + 1] : null;
+    const block = {
+      members: members,
+      startTime: members[0].start,
+      endTime: members[members.length - 1].end,
+    };
+    block.gapBefore = prev ? Math.max(0, block.startTime - prev.endTime) : Infinity;
+    block.gapAfter = next ? Math.max(0, next.startTime - block.endTime) : Infinity;
+    return block;
+  });
+}
+
+/** 组列表缓存：歌词数组或折行参数变化时才重建（逐帧导出时避免每帧重复计算） */
+function subtitleBlocks() {
+  const key = state.cues.length + '|' + state.template.maxChars;
+  const cache = state.blockCache;
+  if (cache && cache.cues === state.cues && cache.key === key) return cache.groups;
+  const groups = buildSubtitleBlocks();
+  state.blockCache = { cues: state.cues, key: key, groups: groups };
+  return groups;
+}
+
+/**
+ * 当前应显示的组：
+ * - 落在某组的时间范围内（含组内两行之间的空隙）→ 显示该组；
+ * - 组间空隙（连唱）→ 保持上一组直到下一组出现，避免闪断；
+ * - 组间空隙（长间隔）→ 只保留淡出时长，之后隐藏。
+ */
+function activeBlock(time) {
+  const groups = subtitleBlocks();
+  if (!groups.length) return null;
+
+  let prev = -1;
+  let next = -1;
+  for (let i = 0; i < groups.length; i++) {
+    const group = groups[i];
+    if (time < group.startTime - 0.001) { next = i; break; }
+    if (time <= group.endTime + 0.0001) return group;
+    prev = i;
+  }
+  if (prev < 0) return null;                       // 首组开始之前
+
+  const block = groups[prev];
+  const tpl = state.template;
+  const hold = (next >= 0 && block.gapAfter <= CONTINUOUS_GAP_SEC)
+    ? groups[next].startTime
+    : block.endTime + (tpl.fadeEnabled ? (tpl.fadeOutDuration || 0) : 0);
+  return time <= hold ? block : null;
+}
+
+/** 整组透明度：连唱（含组内接唱）恒为 1；跨段落（长间隔）或无下一组时才渐入 / 渐出 */
+function blockAlpha(time, block, tpl) {
+  if (!tpl.fadeEnabled) return 1;
+  const fadeIn = tpl.fadeInDuration || 0;
+  const fadeOut = tpl.fadeOutDuration || 0;
+
+  let alpha = 1;
+  if (fadeIn > 0 && block.gapBefore > CONTINUOUS_GAP_SEC && time < block.startTime + fadeIn) {
+    alpha = Math.min(alpha, Math.max(0, (time - block.startTime) / fadeIn));
+  }
+  if (fadeOut > 0 && block.gapAfter > CONTINUOUS_GAP_SEC && time > block.endTime) {
+    alpha = Math.min(alpha, Math.max(0, 1 - (time - block.endTime) / fadeOut));
+  }
+  return Math.max(0, Math.min(1, alpha));
+}
+
+function charProgress(item, time) {
+  if (!item.start && !item.end) return 1;
+  if (time >= item.end) return 1;
+  if (time <= item.start) return 0;
+  return (time - item.start) / (item.end - item.start);
+}
+
+function splitRows(cue, maxChars) {
+  const text = (cue.text || '').replace(/\s+/g, ' ').trim();
+  if (!text) return [];
+
+  const aligned = alignChars(cue, text);
+  const limit = Math.max(4, maxChars || 15);
+  const charsPerRow = aligned.length > limit
+    ? Math.ceil(aligned.length / Math.min(3, Math.ceil(aligned.length / limit)))
+    : aligned.length;
+
+  const rows = [];
+  for (let i = 0; i < aligned.length; i += charsPerRow) {
+    rows.push({ chars: aligned.slice(i, i + charsPerRow) });
+  }
+  if (rows.length > 2) {
+    const merged = [];
+    for (const row of rows) merged.push(...row.chars);
+    const half = Math.ceil(merged.length / 2);
+    return [{ chars: merged.slice(0, half) }, { chars: merged.slice(half) }];
+  }
+  return rows;
+}
+
+/**
+ * 字符级时间对齐：
+ * - sweepMode = 'even'：整句匀速扫色
+ * - 否则优先逐字时间：识别给出的词级时间不含标点 / 空格，
+ *   剔除标点后再与 words 一一对应（标点继承相邻唱词字的时间），
+ *   数量仍不符时才回退整句线性分配
+ */
+function alignChars(cue, text) {
+  const chars = Array.from(text);
+  const start = cue.start || 0;
+  const end = cue.end || start + 3;
+  const evenSpan = (end - start) / chars.length;
+  const evenChars = () => chars.map((ch, i) => ({
+    ch: ch,
+    start: start + evenSpan * i,
+    end: i === chars.length - 1 ? end : start + evenSpan * (i + 1),
+  }));
+
+  if (cue.sweepMode === 'even') {
+    return evenChars();
+  }
+
+  const words = cue.words || [];
+  if (!words.length) {
+    return evenChars();
+  }
+  if (words.length === chars.length) {
+    return chars.map((ch, i) => ({ ch: ch, start: words[i].start, end: words[i].end }));
+  }
+
+  // 词级时间不含标点 / 空白：剔除后数量吻合则逐字对应，标点继承相邻唱词字的时间
+  const isLyric = (ch) => !/[\s\p{P}\p{S}]/u.test(ch);
+  const lyricIdx = [];
+  for (let i = 0; i < chars.length; i++) {
+    if (isLyric(chars[i])) lyricIdx.push(i);
+  }
+  if (lyricIdx.length === words.length) {
+    const out = chars.map((ch) => ({ ch: ch, start: null, end: null }));
+    lyricIdx.forEach((ci, k) => {
+      out[ci] = { ch: chars[ci], start: words[k].start, end: words[k].end };
+    });
+    for (let i = 0; i < out.length; i++) {
+      if (out[i].start != null) continue;
+      let next = null;
+      for (let j = i + 1; j < out.length; j++) {
+        if (out[j].start != null) { next = out[j]; break; }
+      }
+      if (next) {                                  // 标点：紧跟后一个唱词字扫过
+        out[i].start = next.start;
+        out[i].end = next.start;
+      } else {                                     // 句尾标点：跟着最后一个字
+        let prev = null;
+        for (let j = i - 1; j >= 0; j--) {
+          if (out[j].start != null) { prev = out[j]; break; }
+        }
+        out[i].start = prev ? prev.end : end;
+        out[i].end = prev ? prev.end : end;
+      }
+    }
+    return out;
+  }
+
+  return evenChars();
+}
+
+function hexWithAlpha(hex, alpha) {
+  const value = (hex || '#000000').replace('#', '');
+  const r = parseInt(value.substring(0, 2), 16) || 0;
+  const g = parseInt(value.substring(2, 4), 16) || 0;
+  const b = parseInt(value.substring(4, 6), 16) || 0;
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+drawCanvas(0);
+</script>
+</body>
+</html>

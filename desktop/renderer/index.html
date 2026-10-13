@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>歌暮 KTV · 一键识别双行字幕</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- ============ 顶部工具条 ============ -->
+  <header class="toolbar">
+    <div class="brand-mini">
+      <span class="logo">歌</span>
+      <span class="brand-name">歌暮 KTV</span>
+      <span class="brand-badge">一键识别双行字幕</span>
+    </div>
+
+    <div class="tool-group right">
+      <button class="tool gold-solid" id="btnExportTop">导出 MP4</button>
+    </div>
+  </header>
+
+  <!-- ============ 功能选项卡 ============ -->
+  <nav class="tabbar">
+    <button class="navtab active" data-view="recognize"><span class="ico">◎</span>识别字幕</button>
+    <span class="navtab-spacer"></span>
+    <button class="navtab active-gold" data-view="template">歌词模板</button>
+  </nav>
+
+  <!-- ============ 主区：三栏 ============ -->
+  <main class="workspace">
+    <!-- 左：歌曲与素材 -->
+    <aside class="col-left">
+      <section class="card">
+        <h3 class="card-title">歌曲音频</h3>
+
+        <div class="song-card" id="songCard">
+          <div class="song-thumb">♫</div>
+          <div class="song-meta">
+            <div class="song-name" id="songName">未导入歌曲</div>
+            <div class="song-sub" id="songSub">主旋律 · 音频概述</div>
+          </div>
+          <span class="song-tag" id="songTag">--</span>
+        </div>
+
+        <div class="row-gap">
+          <button id="btnPickAudio" class="block">更换歌曲</button>
+        </div>
+
+        <div class="media-drop" id="mediaDrop">
+          <div class="media-thumbs" id="mediaThumbs"></div>
+          <div class="media-caption">
+            <span id="bgFlag">未导入素材</span>
+            <button id="btnPickBg" class="ghost small">+ 素材</button>
+          </div>
+        </div>
+
+        <div class="hint">也可以把文件直接拖入下方素材轨</div>
+      </section>
+
+      <section class="card">
+        <h3 class="card-title">识别</h3>
+        <div class="row-gap">
+          <button id="btnRecognize" class="block gold-solid">一键识别双行字幕</button>
+        </div>
+        <div class="hint">识别时预填 · 自动过滤纯英文 · 本地识别不上传</div>
+        <div class="status-line"><span>字幕状态</span><span class="card-badge" id="flagSub">未识别</span></div>
+        <div class="status-line"><span>歌词行数</span><span class="hint" id="cueCount">0 行</span></div>
+      </section>
+    </aside>
+
+    <!-- 中：播放器 -->
+    <section class="player">
+      <h3 class="player-title">播放器</h3>
+      <div class="stage-frame">
+        <iframe id="stageView" src="stage/ktv-stage.html" title="字幕预览"></iframe>
+        <div class="stage-empty" id="stageEmpty">
+          <div class="empty-icon">▢</div>
+          <div class="empty-title">素材轨为空</div>
+          <div class="empty-sub">可把其他视频或图片加入到素材轨</div>
+        </div>
+      </div>
+
+      <div class="player-foot">
+        <span id="timeLabel" class="time">00:00.0 / 00:00.0</span>
+        <div class="transport">
+          <button id="btnPrev" class="icon-btn">⏮</button>
+          <button id="btnPlay" class="icon-btn">▶</button>
+          <button id="btnNext" class="icon-btn">⏭</button>
+        </div>
+        <span class="hint">歌词模板预览与导出使用同一设置</span>
+      </div>
+    </section>
+
+    <!-- 右：歌词模板 / 字幕样式 / 歌词与扫色 -->
+    <aside class="inspector">
+      <div class="tabs">
+        <button class="tab active" data-tab="template">歌词模板</button>
+        <button class="tab" data-tab="style">字幕样式</button>
+        <button class="tab" data-tab="cues">歌词与扫色</button>
+      </div>
+
+      <!-- 字幕模板：先识别字幕（步骤①），再挑选并应用模板（步骤②） -->
+      <div class="tab-pane active" id="paneTemplate">
+        <div class="flow-steps">
+          <button class="flow-step active" id="stepRecognize"><i>1</i>识别字幕</button>
+          <span class="flow-arrow">→</span>
+          <span class="flow-step" id="stepTemplate"><i>2</i>挑选并应用模板</span>
+        </div>
+        <div class="using-bar">
+          <span class="dot"></span>正在使用 · <span id="usingTemplate">未识别</span>
+          <button id="btnResetTemplate" class="ghost small">恢复字幕</button>
+        </div>
+        <div class="template-grid" id="templateGrid"></div>
+        <div class="hint" id="templateHint">先点左侧「一键识别双行字幕」，识别完成后即可挑选并应用模板</div>
+      </div>
+
+      <!-- 字幕样式 -->
+      <div class="tab-pane" id="paneStyle">
+        <div class="style-grid">
+          <label class="span2">字体（歌暮同款）
+            <select id="optFontFamily">
+              <option value="抖音美好体">抖音美好体（默认）</option>
+              <option value="得意黑">得意黑</option>
+              <option value="MiSans Heavy">MiSans Heavy</option>
+              <option value="霞鹜漫黑">霞鹜漫黑</option>
+              <option value="851 马克笔体">851 马克笔体</option>
+              <option value="站酷快乐体">站酷快乐体</option>
+              <option value="思源宋体 Bold">思源宋体 Bold</option>
+              <option value="汉仪尚巍手书">汉仪尚巍手书</option>
+              <option value="默陌信笺手写">默陌信笺手写</option>
+              <option value="华康海报体">华康海报体</option>
+              <option value="方正童体毛笔">方正童体毛笔</option>
+              <option value="田英章毛笔楷书">田英章毛笔楷书</option>
+              <option value="Microsoft YaHei">系统雅黑</option>
+            </select>
+          </label>
+          <label>已唱（扫色）
+            <select id="optPlayedMode">
+              <option value="gradient">渐变</option>
+              <option value="solid">纯色</option>
+            </select>
+          </label>
+          <label>已唱纯色<input type="color" id="optPlayedSolid" value="#B721FF"></label>
+          <label>渐变起<input type="color" id="optGradStart" value="#A900B2"></label>
+          <label>渐变中<input type="color" id="optGradMid" value="#6651D0"></label>
+          <label>渐变止<input type="color" id="optGradEnd" value="#23A2EE"></label>
+          <label>未唱色<input type="color" id="optUnplayed" value="#FFFFFF"></label>
+          <label>字号<input type="number" id="optFontSize" value="95" min="40" max="200"></label>
+          <label>字距<input type="number" id="optLetterSpacing" value="10" min="0" max="40"></label>
+          <label>描边宽<input type="number" id="optStrokeWidth" value="5" min="0" max="20" step="0.5"></label>
+          <label>描边色<input type="color" id="optStrokeColor" value="#000000"></label>
+          <label>阴影模糊<input type="number" id="optShadowBlur" value="8" min="0" max="40"></label>
+          <label>离底距离<input type="number" id="optBottomMargin" value="160" min="0" max="600"></label>
+          <label>每行最大字数<input type="number" id="optMaxChars" value="15" min="5" max="40"></label>
+          <label>背景预设
+            <select id="optBackgroundPreset">
+              <option value="">（使用导入素材）</option>
+              <option value="background-halo.png">光晕</option>
+              <option value="background-embers.png">余烬</option>
+              <option value="background-orbit.png">轨道</option>
+              <option value="background-prism.png">棱镜</option>
+              <option value="background-ripples.png">涟漪</option>
+              <option value="background-starfield.png">星野</option>
+              <option value="background-topography.png">地形</option>
+              <option value="background-tunnel.png">隧道</option>
+              <option value="background-vinyl.png">黑胶</option>
+              <option value="background-void.png">纯黑背景</option>
+            </select>
+          </label>
+          <label>歌名<input type="text" id="optNameText" placeholder="歌曲名"></label>
+          <label>歌手<input type="text" id="optSingerText" placeholder="歌手"></label>
+          <label class="span2">DJ 名字<input type="text" id="optDjText" placeholder="DJ 名字"></label>
+        </div>
+        <button id="btnApplyStyle" class="block">应用样式到预览</button>
+        <button id="btnStyleReset" class="block gold">恢复字幕</button>
+      </div>
+
+      <!-- 歌词与扫色 -->
+      <div class="tab-pane" id="paneCues">
+        <div class="pane-tools">
+          <button id="btnAddCue" class="ghost small">添加一行</button>
+          <button id="btnSaveCues" class="ghost small">保存歌词</button>
+          <span class="hint">点时间码可重播本句 · 时间轴点歌词块直接编辑本行</span>
+        </div>
+        <div class="pane-tools offset-tools">
+          <span class="hint">口型校正（全部字幕整体平移，即时预览）</span>
+          <button id="btnCueOffM2" class="ghost small" title="全部字幕提前 0.10 秒">−0.1s</button>
+          <button id="btnCueOffM1" class="ghost small" title="全部字幕提前 0.02 秒">−0.02s</button>
+          <span class="offset-value" id="cueOffsetLabel">+0.00s</span>
+          <button id="btnCueOffP1" class="ghost small" title="全部字幕延后 0.02 秒">+0.02s</button>
+          <button id="btnCueOffP2" class="ghost small" title="全部字幕延后 0.10 秒">+0.1s</button>
+          <button id="btnCueOffSave" class="ghost small" title="把当前偏移后的时间写入工程（含逐字时间）">保存偏移</button>
+          <button id="btnCueOffReset" class="ghost small" title="撤销本次未保存的全部偏移">归零</button>
+        </div>
+        <div id="cueList" class="cue-list"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ============ 底部：轨道编辑器 ============ -->
+  <footer class="timeline">
+    <div class="track-tools">
+      <button class="mini" id="btnZoomOut">－</button>
+      <button class="mini" id="btnZoomIn">＋</button>
+      <button class="mini">✎ 编辑</button>
+      <button class="mini" id="btnSnapToggle" title="拖动片段时磁吸到播放头 / 其它片段端点 / 帧网格（拖动中按住 Alt 可临时关闭）">⛓ 吸附：开</button>
+      <button class="mini" id="btnSplitClip" title="把选中片段剪开成两段：按播放头位置切，播放头不在片段内时就近切开（快捷键 Ctrl+B）">✂ 分割</button>
+      <button class="mini gold" id="btnSplitAudio" title="分割音频：按播放头位置把音频切开成两段；在音频轨上按 Ctrl+B 则按光标位置切（分割后可选中段删除，物理裁剪，可撤销）">✂ 分割音频</button>
+      <button class="mini" id="btnAudioUndo" title="撤销上一步音频裁剪（恢复音频文件与歌词，以及音频分段标记）">↶ 音频撤销</button>
+      <button class="mini" id="btnResetClips" title="清空本工程的片段裁剪与位移，恢复均匀铺满">↺ 重置裁剪</button>
+      <button class="mini" id="btnCopyTiming">复制到剪贴板</button>
+      <button class="mini gold" id="btnAddClip">+ 素材</button>
+      <span class="navtab-spacer"></span>
+      <button class="mini">手动节拍</button>
+      <button class="mini">固定节拍</button>
+      <button class="mini">自动</button>
+      <span class="zoom-wrap">⌕<input type="range" id="zoomRange" min="2" max="300" value="90"></span>
+      <span class="hint" id="zoomHint">3.0 秒/格</span>
+      <span class="time" id="timeCursor">00:00.00</span>
+    </div>
+
+    <div class="track-area">
+      <div class="track-labels">
+        <div class="track-label">格式<i>文本</i></div>
+        <div class="track-label">字幕<i>段落计时</i></div>
+        <div class="track-label">素材<i>已调</i></div>
+        <div class="track-label">音频<i>试听</i></div>
+      </div>
+
+      <div class="track-lanes" id="trackLanes">
+        <div class="lanes-content" id="lanesContent">
+          <div class="ruler" id="ruler"></div>
+          <div class="lane lane-sub" id="laneSub"></div>
+          <div class="lane lane-media" id="laneMedia"></div>
+          <div class="lane lane-wave" id="laneWave">
+            <div class="wave-wrap" id="waveWrap">
+              <canvas id="waveCanvas"></canvas>
+            </div>
+            <div class="wave-clip-label" id="waveClipLabel">♪ 未导入歌曲</div>
+          </div>
+          <div class="playhead" id="waveHead"></div>
+          <div class="snap-line" id="snapLine"><i class="snap-tag"></i></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <span id="statusLeft">等待导入歌曲</span>
+      <span class="spacer"></span>
+      <input type="range" id="seek" min="0" max="1000" value="0" step="1" class="seek-hidden">
+      <span id="progressFill" class="progress-hidden"></span>
+      <span class="progress"><i id="progressBar"></i></span>
+      <span id="taskMessage" class="hint">就绪</span>
+      <span id="statusRight">字数: 0 字</span>
+      <button id="btnExportMain" class="gold-solid small">导出视频</button>
+    </div>
+  </footer>
+
+  <div id="selectBox" class="select-box hidden"></div>
+  <div id="trimTip" class="trim-tip"></div>
+  <div id="toast" class="toast hidden"></div>
+  <audio id="audioEl" crossorigin="anonymous"></audio>
+  <script src="app.js"></script>
+</body>
+</html>
