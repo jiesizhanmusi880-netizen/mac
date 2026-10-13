@@ -6,6 +6,9 @@
 #   bash scripts/prepare-mac.sh jre|ffmpeg|whisper|model|build   # 单独一步（CI 分步执行）
 # 前置：Node.js + npm；首次会在本地编译 whisper.cpp（需要 Xcode 命令行工具 / cmake）
 #      后端 jar 已放在 dist-resources/backend/ktv-server.jar（mvn package 构建，跨平台通用）
+# 兼容性：macOS 自带 /bin/bash 是 3.2（苹果不升级）。它解析 $VAR 时若变量后紧跟中文
+#       标点（全角括号等）会误吞字节 → set -u 下报 "VAR: unbound variable"。
+#       所以本脚本里「变量后紧跟非 ASCII 字符」一律写成 ${VAR}，改动时请遵守。
 set -euo pipefail
 cd "$(dirname "$0")/.."                 # → ktv-maker/
 MODE="${1:-all}"
@@ -72,7 +75,7 @@ step_jre() {
 }
 
 step_ffmpeg() {
-  echo "== ffmpeg / ffprobe（官方静态二进制，匹配 $ARCH） =="
+  echo "== ffmpeg / ffprobe（官方静态二进制，匹配 ${ARCH}） =="
   # 二进制来源：ffmpeg-static 的官方 release（与 npm 包 ffmpeg-static@5.3.0 同源，tag b6.1.1）。
   # 直接 curl 下载，不再经 npm——避免连带安装 desktop 的 electron 依赖树（上百 MB），失败面最小。
   local barch="x64"
@@ -181,5 +184,5 @@ case "$MODE" in
   deps)    step_jre; step_ffmpeg; step_whisper; step_model ;;
   all)     step_jre; step_ffmpeg; step_whisper; step_model; step_build ;;
   build)   step_build ;;
-  *)       echo "未知模式: $MODE（可用：all | deps | jre | ffmpeg | whisper | model | build）"; exit 1 ;;
+  *)       echo "未知模式: ${MODE}（可用：all | deps | jre | ffmpeg | whisper | model | build）"; exit 1 ;;
 esac
