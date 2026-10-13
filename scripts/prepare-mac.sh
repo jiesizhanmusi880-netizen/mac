@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # macOS 打包准备 + 出包
 # 用法：
-#   bash scripts/prepare-mac.sh all          # 本机全流程：依赖 + 构建 dmg（默认）
-#   bash scripts/prepare-mac.sh deps         # 准备全部依赖（jar + JRE + 工具 + 模型）
-#   bash scripts/prepare-mac.sh jre|tools|model|build   # 单独一步（CI 分步执行，失败可精确定位）
-# 前置：Node.js + npm、Homebrew
+#   bash scripts/prepare-mac.sh all              # 本机全流程：依赖 + 构建 dmg（默认）
+#   bash scripts/prepare-mac.sh deps             # 准备全部依赖（JRE + ffmpeg + whisper + 模型）
+#   bash scripts/prepare-mac.sh jre|ffmpeg|whisper|model|build   # 单独一步（CI 分步执行）
+# 前置：Node.js + npm；首次会在本地编译 whisper.cpp（需要 Xcode 命令行工具 / cmake）
 #      后端 jar 已放在 dist-resources/backend/ktv-server.jar（mvn package 构建，跨平台通用）
 set -euo pipefail
 cd "$(dirname "$0")/.."                 # → ktv-maker/
@@ -26,29 +26,40 @@ step_dirs() {
 }
 
 step_jre() {
-  echo "== 内置 JRE 17（Adoptium Temurin，$ARCH） =="
-  # 说明：macOS arm64 没有官方 Java 8 运行时；后端 jar 编译目标为 Java 8，
-  #       在 JRE 17 上运行完全兼容（Spring Boot 2.7 官方支持 JDK 17）。
+  echo "== 内置 JRE 17 =="
+  # 说明：macOS arm64 没有官方 Java 8；后端 jar 编译目标为 Java 8，在 JRE 17 上运行完全兼容。
   if [ -x "$RES/backend/jre/bin/java" ]; then
     echo "已存在，跳过"
     return
   fi
+  # 优先：使用本机已安装的 JDK（CI 里由 setup-java 提供 JAVA_HOME），零网络风险
+  if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    echo "使用已安装的 JDK 作为内置运行时：$JAVA_HOME"
+    mkdir -p "$RES/backend/jre"
+    cp -R "$JAVA_HOME"/. "$RES/backend/jre"/
+    # 精简：删掉编译/开发组件（运行时不需要，省 ~100MB）
+    rm -rf "$RES/backend/jre/jmods" "$RES/backend/jre/include" "$RES/backend/jre/man" \
+           "$RES/backend/jre/lib/src.zip" 2>/dev/null || true
+    chmod +x "$RES/backend/jre/bin/java"
+    "$RES/backend/jre/bin/java" -version 2>&1 | head -1 || true
+    return
+  fi
+  # 回退：联网下载 Temurin（本机模式且未装 JDK 时）
   local url="https://api.adoptium.net/v3/binary/latest/17/ga/mac/${JARCH}/jre/hotspot/normal/eclipse"
   local tmp
   tmp="$(mktemp -d)"
-  echo "下载：$url"
+  echo "未检测到 JAVA_HOME，联网下载：$url"
   if ! curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 900 -o "$tmp/jre.tar.gz" "$url"; then
-    echo "JRE 下载失败，回退尝试 JDK …"
     url="https://api.adoptium.net/v3/binary/latest/17/ga/mac/${JARCH}/jdk/hotspot/normal/eclipse"
+    echo "JRE 下载失败，回退 JDK 包：$url"
     if ! curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 1200 -o "$tmp/jre.tar.gz" "$url"; then
-      echo "!! JRE 下载失败：请到 https://adoptium.net/temurin/releases/?version=17"
-      echo "   手动下载 macOS ${JARCH} 的 JRE/JDK，解压后把 Contents/Home 放到 $RES/backend/jre"
+      echo "!! 下载失败：请到 https://adoptium.net/temurin/releases/?version=17 手动下载"
+      echo "   macOS ${JARCH} 的 JRE/JDK，解压后把 Contents/Home 放到 $RES/backend/jre"
       exit 1
     fi
   fi
   tar -xzf "$tmp/jre.tar.gz" -C "$tmp"
   local jhome
-  # 注意：-maxdepth 必须在路径之后、其它条件之前（BSD find 的硬性要求，macOS 适用）
   jhome="$(find "$tmp" -maxdepth 4 -type d -path '*Contents/Home' -print -quit)"
   if [ -n "$jhome" ]; then
     mv "$jhome" "$RES/backend/jre"
@@ -60,7 +71,7 @@ step_jre() {
   "$RES/backend/jre/bin/java" -version 2>&1 | head -1 || true
 }
 
-step_tools() {
+step_ffmpeg() {
   echo "== ffmpeg / ffprobe（npm 静态二进制，匹配 $ARCH） =="
   if [ ! -x "$RES/bin/ffmpeg" ] || [ ! -x "$RES/bin/ffprobe" ]; then
     ( cd desktop && npm i --no-save ffmpeg-static ffprobe-static )
@@ -77,19 +88,33 @@ step_tools() {
   fi
   chmod +x "$RES/bin/ffmpeg" "$RES/bin/ffprobe"
   "$RES/bin/ffmpeg" -version 2>&1 | head -1 || true
+}
 
-  echo "== whisper-cli（whisper.cpp） =="
-  if [ ! -x "$RES/bin/whisper-cli" ]; then
-    if ! command -v whisper-cli >/dev/null 2>&1; then
-      export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
-      if ! brew install whisper-cpp; then
-        echo "首次安装失败，重试一次 …"
-        brew install whisper-cpp
-      fi
-    fi
-    cp "$(command -v whisper-cli)" "$RES/bin/whisper-cli"
+step_whisper() {
+  echo "== whisper-cli（whisper.cpp 静态编译，保证拷进 app 后可直接运行） =="
+  if [ -x "$RES/bin/whisper-cli" ]; then
+    echo "已存在，跳过"
+    return
   fi
+  local wdir
+  wdir="$(mktemp -d)"
+  echo "克隆 whisper.cpp …"
+  git clone --depth 1 https://github.com/ggml-org/whisper.cpp "$wdir/src"
+  echo "编译 whisper-cli（静态链接，约 2~4 分钟）…"
+  cmake -B "$wdir/src/build" -S "$wdir/src" \
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF
+  cmake --build "$wdir/src/build" --config Release -j 4 --target whisper-cli \
+    || cmake --build "$wdir/src/build" --config Release -j 4 --target main
+  local bin="$wdir/src/build/bin/whisper-cli"
+  if [ ! -f "$bin" ]; then bin="$wdir/src/build/bin/main"; fi
+  if [ ! -f "$bin" ]; then
+    echo "!! 未找到编译产物（whisper-cli / main）"
+    exit 1
+  fi
+  cp "$bin" "$RES/bin/whisper-cli"
+  rm -rf "$wdir"
   chmod +x "$RES/bin/whisper-cli"
+  "$RES/bin/whisper-cli" --help 2>&1 | head -1 || true
 }
 
 step_model() {
@@ -127,10 +152,13 @@ step_build() {
 
 step_dirs
 case "$MODE" in
-  jre)   step_jre ;;
-  tools) step_tools ;;
-  model) step_model ;;
-  deps)  step_jre; step_tools; step_model ;;
-  all)   step_jre; step_tools; step_model; step_build ;;
-  *)     echo "未知模式: $MODE（可用：all | deps | jre | tools | model | build）"; exit 1 ;;
+  jre)     step_jre ;;
+  ffmpeg)  step_ffmpeg ;;
+  whisper) step_whisper ;;
+  tools)   step_ffmpeg; step_whisper ;;
+  model)   step_model ;;
+  deps)    step_jre; step_ffmpeg; step_whisper; step_model ;;
+  all)     step_jre; step_ffmpeg; step_whisper; step_model; step_build ;;
+  build)   step_build ;;
+  *)       echo "未知模式: $MODE（可用：all | deps | jre | ffmpeg | whisper | model | build）"; exit 1 ;;
 esac

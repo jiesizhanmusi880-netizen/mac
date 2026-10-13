@@ -43,11 +43,14 @@ jobs:
           mkdir -p dist-resources/backend
           cp server/target/ktv-server-0.1.0.jar dist-resources/backend/ktv-server.jar
 
-      - name: Prepare JRE 17
+      - name: Prepare JRE (copy installed JDK)
         run: bash scripts/prepare-mac.sh jre
 
-      - name: Prepare ffmpeg + whisper-cli
-        run: bash scripts/prepare-mac.sh tools
+      - name: Prepare ffmpeg / ffprobe
+        run: bash scripts/prepare-mac.sh ffmpeg
+
+      - name: Build whisper-cli (static)
+        run: bash scripts/prepare-mac.sh whisper
 
       - name: Download whisper model (1.5GB)
         run: bash scripts/prepare-mac.sh model
