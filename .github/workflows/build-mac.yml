@@ -58,7 +58,7 @@ jobs:
       - name: Build DMG
         working-directory: desktop
         run: |
-          npm i
+          npm i || (echo "npm i 失败，重试 …" && sleep 5 && npm i)
           npx electron-builder --mac --${{ matrix.arch }}
 
       - name: Upload DMG

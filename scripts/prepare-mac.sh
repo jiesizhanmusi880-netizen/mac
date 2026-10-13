@@ -72,22 +72,42 @@ step_jre() {
 }
 
 step_ffmpeg() {
-  echo "== ffmpeg / ffprobe（npm 静态二进制，匹配 $ARCH） =="
-  if [ ! -x "$RES/bin/ffmpeg" ] || [ ! -x "$RES/bin/ffprobe" ]; then
-    ( cd desktop && npm i --no-save ffmpeg-static ffprobe-static )
-    cp desktop/node_modules/ffmpeg-static/ffmpeg "$RES/bin/ffmpeg"
-    local fp="desktop/node_modules/ffprobe-static/bin/darwin/${ARCH}/ffprobe"
-    if [ ! -f "$fp" ]; then
-      fp="$(find desktop/node_modules/ffprobe-static -type f -name ffprobe -print -quit)"
+  echo "== ffmpeg / ffprobe（官方静态二进制，匹配 $ARCH） =="
+  # 二进制来源：ffmpeg-static 的官方 release（与 npm 包 ffmpeg-static@5.3.0 同源，tag b6.1.1）。
+  # 直接 curl 下载，不再经 npm——避免连带安装 desktop 的 electron 依赖树（上百 MB），失败面最小。
+  local barch="x64"
+  if [ "$ARCH" = "arm64" ]; then barch="arm64"; fi
+  local tag="b6.1.1"
+  local base="https://github.com/eugeneware/ffmpeg-static/releases/download/$tag"
+  local mirror="https://registry.npmmirror.com/-/binary/ffmpeg-static/$tag"
+  local tmp
+  tmp="$(mktemp -d)"
+  local name url ok
+  for name in ffmpeg ffprobe; do
+    if [ -x "$RES/bin/$name" ]; then
+      echo "$name 已存在，跳过"
+      continue
     fi
-    if [ -z "$fp" ] || [ ! -f "$fp" ]; then
-      echo "!! 未找到 ffprobe 二进制（ffprobe-static 安装可能失败）"
+    ok=""
+    for url in "$base/$name-darwin-$barch.gz" "$mirror/$name-darwin-$barch.gz"; do
+      echo "下载 $name ← $url"
+      if curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 900 -o "$tmp/$name.gz" "$url" \
+         && gunzip -c "$tmp/$name.gz" > "$tmp/$name"; then
+        cp "$tmp/$name" "$RES/bin/$name"
+        ok=1
+        break
+      fi
+    done
+    if [ -z "$ok" ]; then
+      echo "!! $name 下载失败：请手动下载 $name-darwin-$barch.gz，解压后放到 $RES/bin/$name"
+      rm -rf "$tmp"
       exit 1
     fi
-    cp "$fp" "$RES/bin/ffprobe"
-  fi
+  done
+  rm -rf "$tmp"
   chmod +x "$RES/bin/ffmpeg" "$RES/bin/ffprobe"
   "$RES/bin/ffmpeg" -version 2>&1 | head -1 || true
+  "$RES/bin/ffprobe" -version 2>&1 | head -1 || true
 }
 
 step_whisper() {
@@ -102,7 +122,8 @@ step_whisper() {
   git clone --depth 1 https://github.com/ggml-org/whisper.cpp "$wdir/src"
   echo "编译 whisper-cli（静态链接，约 2~4 分钟）…"
   cmake -B "$wdir/src/build" -S "$wdir/src" \
-    -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF \
+    -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
   cmake --build "$wdir/src/build" --config Release -j 4 --target whisper-cli \
     || cmake --build "$wdir/src/build" --config Release -j 4 --target main
   local bin="$wdir/src/build/bin/whisper-cli"
