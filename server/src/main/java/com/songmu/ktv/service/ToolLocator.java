@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -14,10 +15,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 探测外部工具：
+ * 探测外部工具（Windows / macOS 通用：Windows 带 .exe 后缀，macOS 无扩展名）：
  * - ffmpeg / ffprobe（bin 目录优先，其次系统 PATH）
- * - whisper.cpp（whisper-cli.exe + bin/models/ggml-*.bin）
- * - Python 版 whisper（whisper.exe，OpenAI 官方包，作为无 whisper.cpp 时的后备）
+ * - whisper.cpp（whisper-cli + bin/models/ggml-*.bin）
+ * - Python 版 whisper（whisper，OpenAI 官方包，作为无 whisper.cpp 时的后备）
  */
 @Service
 public class ToolLocator {
@@ -43,8 +44,9 @@ public class ToolLocator {
     public void detect() {
         ffmpeg = find("ffmpeg.exe", "ffmpeg");
         ffprobe = find("ffprobe.exe", "ffprobe");
-        whisperCpp = find("whisper-cli.exe", "main.exe", "whisper-cpp.exe");
-        pythonWhisper = find("whisper.exe");
+        // 候选名同时覆盖 Windows（.exe）与 macOS / Linux（无扩展名）
+        whisperCpp = find("whisper-cli.exe", "whisper-cli", "main.exe", "main", "whisper-cpp.exe", "whisper-cpp");
+        pythonWhisper = find("whisper.exe", "whisper");
         cppModel = paths.modelsDir().resolve(modelName);
         log.info("工具探测: ffmpeg={} whisperCpp={} pythonWhisper={} cppModel={}",
                 ffmpeg, whisperCpp, pythonWhisper, Files.isRegularFile(cppModel) ? cppModel : "(缺失)");
@@ -59,7 +61,7 @@ public class ToolLocator {
         }
         String pathEnv = System.getenv("PATH");
         if (pathEnv != null) {
-            String[] dirs = pathEnv.split(";");
+            String[] dirs = pathEnv.split(File.pathSeparator);   // Windows ";" / macOS-Linux ":"
             for (String dir : dirs) {
                 if (dir.trim().isEmpty()) {
                     continue;

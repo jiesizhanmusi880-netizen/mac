@@ -315,7 +315,7 @@ function openTemplatePane() {
 
 /* ================= 时间轴（标尺 / 歌词 / 素材 / 波形） ================= */
 
-/** 让整首歌刚好铺满可视宽度（歌暮的默认视图） */
+/** 让整首歌刚好铺满可视宽度（默认视图） */
 function fitZoom() {
   const lanes = el('trackLanes');
   const total = duration();
@@ -395,7 +395,7 @@ function renderTimeline() {
     });
   }
 
-  // 素材轨：歌暮式片段（蓝标题栏 + 胶片条 + 分帧裁剪把手）
+  // 素材轨：胶片式片段（蓝标题栏 + 胶片条 + 分帧裁剪把手）
   const laneMedia = el('laneMedia');
   if (laneMedia) {
     laneMedia.innerHTML = '';
@@ -524,7 +524,7 @@ function renderTimeline() {
     });
   }
 
-  // 波形片段标签（歌暮样式胶囊）
+  // 波形片段标签（胶囊样式）
   const label = el('waveClipLabel');
   if (label) {
     if (project && project.audio) {
@@ -543,7 +543,7 @@ function renderTimeline() {
   drawWaveform(playRatio());
 }
 
-/** 时间码格式：时:分:秒:帧（歌暮素材片段上的显示方式） */
+/** 时间码格式：时:分:秒:帧（素材片段上的显示方式） */
 function fmtTimecode(seconds, fps) {
   const f = Math.max(1, fps || 30);
   const value = Math.max(0, seconds || 0);
@@ -3279,7 +3279,7 @@ function bindEvents() {
     renderTemplateGrid();
     applyTemplateToPanel(project.template);
     pushStage();
-    toast('已恢复歌暮默认样式', 'ok');
+    toast('已恢复 KFC Music 默认样式', 'ok');
   });
   on('btnApplyStyle', 'click', async () => {
     if (!project) return;

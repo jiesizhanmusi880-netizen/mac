@@ -20,6 +20,9 @@ bin/
 # 开发临时文件
 server/javac-args.txt
 
+# 逆向分析辅助工具（与产品无关，且引用外部目录）
+tools/
+
 # 系统文件
 .DS_Store
 Thumbs.db

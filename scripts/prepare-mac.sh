@@ -87,4 +87,4 @@ cd desktop
 npm i
 npm run dist:mac
 echo
-echo "完成！安装包在 ktv-maker/dist/ 下（KTV Maker-0.1.0-*.dmg）"
+echo "完成！安装包在 ktv-maker/dist/ 下（KFC Music-0.1.0-*.dmg）"

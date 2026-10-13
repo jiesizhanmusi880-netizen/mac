@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 启动歌暮应用内嵌的 Web 界面并截图（还原真实 UI 组件外观）。
+ * 启动桌面应用内嵌的 Web 界面并截图（还原真实 UI 组件外观）。
  * 用法：npx electron tools/capture-app-pages.js
  */
 const { app, BrowserWindow } = require('electron');

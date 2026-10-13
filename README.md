@@ -51,7 +51,7 @@ MVP 阶段**不使用数据库**：每个项目一个目录（`server/data/proje
 
 - **Electron**：加载 KTV 字幕舞台（HTML/CSS/Canvas 动画），按时间轴用 `capturePage()` 逐帧截图 → 交给后端
 - **Spring Boot**：编排 whisper 识别、调用 ffmpeg 转码/合成（帧序列 + 音轨 → MP4）
-- **whisper.cpp**：本地识别，`--output-json` + DTW 词级时间戳；后处理移植歌暮抗幻觉思路
+- **whisper.cpp**：本地识别，`--output-json` + DTW 词级时间戳；后处理含抗幻觉过滤
 
 ## 运行方式（开发）
 
@@ -69,4 +69,4 @@ npm start
 ## 分阶段
 
 - 阶段一（MVP）：音频+背景素材导入 → 识别 → KTV 双行逐字高亮 → 导出 1080p/30fps
-- 阶段二：歌暮式时间轴修正与抗幻觉、多图轮播、模板/字体/颜色面板、波形装饰
+- 阶段二：时间轴修正与抗幻觉、多图轮播、模板/字体/颜色面板、波形装饰

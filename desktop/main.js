@@ -103,7 +103,7 @@ function createWindow() {
     minWidth: 1180,
     minHeight: 760,
     backgroundColor: '#0a0a0f',
-    title: '歌暮 KTV · 歌词字幕制作',
+    title: 'KFC Music · 歌词字幕视频制作',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

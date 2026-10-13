@@ -45,7 +45,7 @@ public class FfmpegService {
 
     private void requireFfmpeg() {
         if (!tools.ffmpegReady()) {
-            throw new IllegalStateException("ffmpeg 未就绪，请把 ffmpeg.exe 放入 bin 目录");
+            throw new IllegalStateException("ffmpeg 未就绪：请把 ffmpeg（Windows 为 ffmpeg.exe）放入 bin 目录");
         }
     }
 

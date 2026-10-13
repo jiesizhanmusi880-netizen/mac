@@ -1,5 +1,5 @@
 /*
- * 参照歌暮正式版界面截图的布局与配色：
+ * 界面布局与配色：
  *   近黑底 #0c0c10 / 面板 #15161c / 轨道区 #101015 / 边框 #2a2c36
  *   金色 #ffc449（主操作、激活项）· 紫色 #a855f7（模板选中）· 青色 #50d9e8
  * 结构：工具条 / 功能选项卡 / 三栏（歌曲素材·播放器·歌词模板）/ 轨道编辑器
@@ -448,7 +448,7 @@ input[type="range"].seek-hidden { display: none; }
 
 .lane-media { background: rgba(87, 217, 154, .04); }
 
-/* 素材片段：蓝底标题栏 + 胶片条 + 选择片段胶囊（对齐歌暮） */
+/* 素材片段：蓝底标题栏 + 胶片条 + 选择片段胶囊 */
 .clip {
   position: absolute; top: 2px; bottom: 2px;
   display: flex; flex-direction: column;
@@ -692,7 +692,7 @@ body.marquee-active, body.marquee-active * { cursor: crosshair !important; user-
 .lane-wave .wave-wrap { position: absolute; top: 0; bottom: 0; left: 0; width: 100%; }
 #waveCanvas { display: block; width: 100%; height: 100%; }
 
-/* 波形中间的胶囊片段标签（对齐歌暮音频轨样式） */
+/* 波形中间的胶囊片段标签（音频轨样式） */
 .wave-clip-label {
   position: absolute; left: 50%; top: 50%; z-index: 3;
   transform: translate(-50%, -50%);

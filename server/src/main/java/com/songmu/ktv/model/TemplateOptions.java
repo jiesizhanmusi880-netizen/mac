@@ -2,11 +2,11 @@ package com.songmu.ktv.model;
 
 /**
  * KTV 字幕模板参数。
- * 默认值参考歌暮 defaults.json（字号/渐变/描边/阴影），落点为 1080p 画布。
+ * 默认值（字号/渐变/描边/阴影）落点为 1080p 画布。
  */
 public class TemplateOptions {
 
-    /** 默认字体与歌暮一致：抖音美好体 */
+    /** 默认字体：抖音美好体 */
     private String fontFamily = "抖音美好体";
     /** 背景预设图文件名（desktop/assets/backgrounds 下），空表示不使用 */
     private String backgroundPreset;
