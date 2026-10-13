@@ -38,13 +38,18 @@ step_jre() {
   tmp="$(mktemp -d)"
   echo "下载：$url"
   if ! curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 900 -o "$tmp/jre.tar.gz" "$url"; then
-    echo "!! JRE 下载失败：请到 https://adoptium.net/temurin/releases/?version=17"
-    echo "   手动下载 macOS ${JARCH} 的 JRE，解压后把 Contents/Home 放到 $RES/backend/jre"
-    exit 1
+    echo "JRE 下载失败，回退尝试 JDK …"
+    url="https://api.adoptium.net/v3/binary/latest/17/ga/mac/${JARCH}/jdk/hotspot/normal/eclipse"
+    if ! curl -fL --retry 3 --retry-delay 3 --connect-timeout 30 --max-time 1200 -o "$tmp/jre.tar.gz" "$url"; then
+      echo "!! JRE 下载失败：请到 https://adoptium.net/temurin/releases/?version=17"
+      echo "   手动下载 macOS ${JARCH} 的 JRE/JDK，解压后把 Contents/Home 放到 $RES/backend/jre"
+      exit 1
+    fi
   fi
   tar -xzf "$tmp/jre.tar.gz" -C "$tmp"
   local jhome
-  jhome="$(find "$tmp" -type d -path '*Contents/Home' -maxdepth 4 -print -quit)"
+  # 注意：-maxdepth 必须在路径之后、其它条件之前（BSD find 的硬性要求，macOS 适用）
+  jhome="$(find "$tmp" -maxdepth 4 -type d -path '*Contents/Home' -print -quit)"
   if [ -n "$jhome" ]; then
     mv "$jhome" "$RES/backend/jre"
   else

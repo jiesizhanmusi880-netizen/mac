@@ -5,6 +5,11 @@ on:
   push:
     branches: [ main ]        # 推送 main 自动构建
 
+# 新推送自动取消旧的排队 / 运行中构建，避免占着队列
+concurrency:
+  group: build-mac-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
