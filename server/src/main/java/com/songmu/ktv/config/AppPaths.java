@@ -19,11 +19,18 @@ public class AppPaths {
 
     private final Path dataDir;
     private final Path binDir;
+    private final Path modelsDir;
 
     public AppPaths(@Value("${ktv.data-dir:./data}") String dataDir,
-                    @Value("${ktv.bin-dir:../bin}") String binDir) {
+                    @Value("${ktv.bin-dir:../bin}") String binDir,
+                    @Value("${ktv.models-dir:}") String modelsDir) {
         this.dataDir = Paths.get(dataDir).toAbsolutePath().normalize();
         this.binDir = Paths.get(binDir).toAbsolutePath().normalize();
+        // 模型目录：默认 bin/models；打包运行时由桌面端传 --ktv.models-dir 指向用户可写目录
+        // （语音识别模型不进安装包，改为首次使用时在应用内下载，见 desktop/main.js）
+        this.modelsDir = (modelsDir == null || modelsDir.trim().isEmpty())
+                ? this.binDir.resolve("models")
+                : Paths.get(modelsDir).toAbsolutePath().normalize();
     }
 
     @PostConstruct
@@ -44,7 +51,7 @@ public class AppPaths {
     }
 
     public Path modelsDir() {
-        return binDir.resolve("models");
+        return modelsDir;
     }
 
     public Path projectDir(String projectId) {

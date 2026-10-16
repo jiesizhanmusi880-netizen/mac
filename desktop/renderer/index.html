@@ -259,6 +259,24 @@
   <div id="selectBox" class="select-box hidden"></div>
   <div id="trimTip" class="trim-tip"></div>
   <div id="toast" class="toast hidden"></div>
+
+  <!-- 首次使用：语音识别模型下载（模型不进安装包，联网下载一次后永久可用） -->
+  <div id="modelGate" class="model-gate hidden">
+    <div class="model-card">
+      <div class="model-title">首次使用：准备语音识别模型</div>
+      <div class="model-desc">
+        歌词识别用的语音模型（约 1.5GB）不在安装包内，需要联网下载一次，下载后永久离线可用。
+        支持断点续传：中途失败或退出后再点下载会接着传。
+      </div>
+      <div class="model-progress"><i id="modelProgressBar"></i></div>
+      <div class="model-meta" id="modelGateMeta">等待开始 · 约 1.5GB</div>
+      <div class="model-actions">
+        <button id="btnModelStart" class="gold-solid small">开始下载</button>
+        <button id="btnModelLater" class="ghost small">稍后再说</button>
+      </div>
+      <div class="model-hint" id="modelGateHint">下载源：国内镜像优先，官方源自动兜底。</div>
+    </div>
+  </div>
   <audio id="audioEl" crossorigin="anonymous"></audio>
   <script src="app.js"></script>
 </body>

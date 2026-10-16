@@ -23,6 +23,69 @@ function resourcesRoot() {
   return isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'dist-resources');
 }
 
+/* ---------------- 语音识别模型：不进安装包，首次使用时在应用内下载 ---------------- */
+
+const MODEL_FILE = 'ggml-medium.bin';
+// 下载源：国内镜像优先，官方源兜底（与打包脚本 prepare-mac.sh 的模型源一致）
+const MODEL_SOURCES = [
+  'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/' + MODEL_FILE,
+  'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/' + MODEL_FILE,
+];
+const MODEL_MIN_BYTES = 1200 * 1000 * 1000;   // medium 约 1.5GB：明显小于此值视为不完整
+
+const modelState = { downloading: false, downloaded: 0, total: 0, error: null, cancelled: false };
+
+/** 模型存放位置（用户可写目录）：…/Application Support/KFC Music/models */
+function modelsDir() {
+  return path.join(app.getPath('userData'), 'models');
+}
+
+function modelFile() {
+  return path.join(modelsDir(), MODEL_FILE);
+}
+
+/** 后端使用的模型目录：包内已带模型（离线包）则用包内，否则用用户下载目录 */
+function backendModelsDir() {
+  const bundled = path.join(resourcesRoot(), 'bin', 'models');
+  try {
+    if (fs.statSync(path.join(bundled, MODEL_FILE)).size >= MODEL_MIN_BYTES) return bundled;
+  } catch (err) { /* 包内没有：走用户目录 */ }
+  return modelsDir();
+}
+
+/** 当前活动模型文件路径 */
+function activeModelFile() {
+  return path.join(backendModelsDir(), MODEL_FILE);
+}
+
+function modelReady() {
+  try { return fs.statSync(activeModelFile()).size >= MODEL_MIN_BYTES; }
+  catch (err) { return false; }
+}
+
+function modelStatusPayload() {
+  let size = 0;
+  try { size = fs.statSync(activeModelFile()).size; } catch (err) { size = 0; }
+  return {
+    packaged: isPackaged,
+    ready: modelReady(),
+    size: size,
+    minBytes: MODEL_MIN_BYTES,
+    path: activeModelFile(),
+    downloading: modelState.downloading,
+    downloaded: modelState.downloaded,
+    total: modelState.total,
+    error: modelState.error,
+  };
+}
+
+function broadcastModel(extra) {
+  const payload = Object.assign(modelStatusPayload(), extra || {});
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('model:progress', payload);
+  }
+}
+
 /** 从 start 起找一个空闲端口 */
 function findFreePort(start) {
   return new Promise((resolve) => {
@@ -77,6 +140,7 @@ async function startBackend() {
     '--server.port=' + backendPort,
     '--ktv.data-dir=' + dataDir,
     '--ktv.bin-dir=' + binDir,
+    '--ktv.models-dir=' + backendModelsDir(),   // 模型在用户目录（首次使用时下载）
   ], {
     cwd: app.getPath('userData'),        // 日志等相对路径落在用户目录
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -185,6 +249,87 @@ app.on('will-quit', () => {
   stopBackend();
 });
 
+/* ---------------- 模型下载（多源轮换 / 断点续传 / 自动重试） ---------------- */
+
+/** 从单个源下载（带 Range 续传）；返回最终字节数 */
+async function downloadModelFrom(url, partPath) {
+  let start = 0;
+  try { start = fs.statSync(partPath).size; } catch (err) { start = 0; }
+  const headers = {};
+  if (start > 0) headers.Range = 'bytes=' + start + '-';
+  const res = await fetch(url, { headers, redirect: 'follow' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const partial = res.status === 206;
+  const len = Number(res.headers.get('content-length') || 0);
+  if (start > 0 && !partial) start = 0;          // 服务端不支持续传：从头下
+  modelState.total = len > 0 ? start + len : 0;
+  const file = fs.createWriteStream(partPath, { flags: start > 0 ? 'a' : 'w' });
+  let got = start;
+  let lastEmit = 0;
+  try {
+    for await (const chunk of res.body) {
+      if (modelState.cancelled) throw new Error('已取消');
+      await new Promise((resolve, reject) => file.write(chunk, (err) => (err ? reject(err) : resolve())));
+      got += chunk.length;
+      modelState.downloaded = got;
+      const now = Date.now();
+      if (now - lastEmit > 400) { lastEmit = now; broadcastModel(); }
+    }
+  } finally {
+    await new Promise((resolve) => file.end(resolve));
+  }
+  return got;
+}
+
+/** 开始下载（幂等）：镜像/官方多源轮换 × 3 轮，失败保留 .part 供续传 */
+async function startModelDownload() {
+  if (!isPackaged) return { started: false, reason: '开发模式使用项目内 dist-resources 的模型' };
+  if (modelReady()) return { started: false, reason: '模型已就绪' };
+  if (modelState.downloading) return { started: false, reason: '已在下载中' };
+  modelState.downloading = true;
+  modelState.error = null;
+  modelState.cancelled = false;
+  modelState.downloaded = 0;
+  modelState.total = 0;
+  await fsp.mkdir(modelsDir(), { recursive: true });
+  const partPath = modelFile() + '.part';
+  broadcastModel();
+  (async () => {
+    let lastErr = null;
+    for (let round = 0; round < 3 && !modelState.cancelled; round++) {
+      for (let s = 0; s < MODEL_SOURCES.length && !modelState.cancelled; s++) {
+        try {
+          const got = await downloadModelFrom(MODEL_SOURCES[s], partPath);
+          if (got < MODEL_MIN_BYTES) throw new Error('文件不完整（' + got + ' 字节）');
+          await fsp.rename(partPath, modelFile());
+          modelState.downloading = false;
+          modelState.downloaded = got;
+          modelState.error = null;
+          broadcastModel({ done: true });
+          return;
+        } catch (err) {
+          if (modelState.cancelled) break;
+          lastErr = err;
+          modelState.error = '下载源 ' + (s + 1) + '/' + MODEL_SOURCES.length
+            + ' 失败（' + err.message + '）' + (s + 1 < MODEL_SOURCES.length ? '，切换备用源…' : '，稍后重试…');
+          broadcastModel();
+        }
+      }
+      if (modelState.cancelled) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    modelState.downloading = false;
+    if (modelState.cancelled) {
+      modelState.error = null;                 // 取消不算错误；已下载部分保留，重试续传
+    } else {
+      modelState.error = '下载失败：' + (lastErr ? lastErr.message : '未知错误')
+        + '（已下载 ' + Math.round(modelState.downloaded / 1048576) + 'MB，重试会自动继续）';
+    }
+    broadcastModel();
+  })();
+  return { started: true };
+}
+
 /* ---------------- 基础 IPC ---------------- */
 
 ipcMain.handle('app:info', () => ({
@@ -192,6 +337,14 @@ ipcMain.handle('app:info', () => ({
   packaged: isPackaged,
   version: app.getVersion(),
 }));
+
+/* 语音识别模型：状态查询 / 开始下载 / 取消（进度通过 model:progress 事件推送） */
+ipcMain.handle('model:status', () => modelStatusPayload());
+ipcMain.handle('model:download', () => startModelDownload());
+ipcMain.handle('model:cancel', () => {
+  if (modelState.downloading) modelState.cancelled = true;
+  return true;
+});
 
 ipcMain.handle('dialog:openFile', async (_event, options) => {
   const result = await dialog.showOpenDialog(mainWindow, options || {});

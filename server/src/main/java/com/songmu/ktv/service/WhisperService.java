@@ -80,8 +80,8 @@ public class WhisperService {
     public List<SubtitleCue> recognize(Path wav, Path outBase, TaskInfo task) throws IOException, InterruptedException {
         String backend = tools.whisperBackend();
         if (backend == null) {
-            throw new IllegalStateException("未找到可用的识别后端：请安装 whisper（Python 包）"
-                    + "或把 whisper-cli（Windows 为 whisper-cli.exe）与模型放入 bin 目录");
+            throw new IllegalStateException("语音识别未就绪：请先从应用内下载语音识别模型"
+                    + "（顶部「识别器」徽标可查看 / 下载），或把 whisper-cli 与 ggml 模型放入 bin/models 目录");
         }
         log.info("使用识别后端: {}", backend);
 

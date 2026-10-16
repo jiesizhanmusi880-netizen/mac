@@ -735,3 +735,32 @@ body.marquee-active, body.marquee-active * { cursor: crosshair !important; user-
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #2f313c; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============ 首次使用：语音识别模型下载引导 ============ */
+.model-gate {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(6, 6, 10, .78);
+  backdrop-filter: blur(3px);
+}
+.model-card {
+  width: 460px; max-width: calc(100vw - 48px);
+  padding: 22px 24px 18px;
+  background: #14151c; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .65);
+}
+.model-title { font-size: 15px; font-weight: 600; color: #ffe9bd; margin-bottom: 10px; }
+.model-desc { font-size: 12px; line-height: 1.7; color: #b9bac4; margin-bottom: 14px; }
+.model-progress {
+  height: 8px; border-radius: 4px; overflow: hidden;
+  background: var(--control); border: 1px solid var(--line);
+}
+.model-progress i {
+  display: block; height: 100%; width: 0;
+  background: linear-gradient(90deg, #e0a32e, var(--gold));
+  transition: width .25s ease;
+}
+.model-meta { margin-top: 8px; font-size: 11px; color: #9a9ba6; min-height: 15px; }
+.model-actions { margin-top: 14px; display: flex; gap: 10px; }
+.model-actions .small { padding: 6px 16px; }
+.model-hint { margin-top: 10px; font-size: 11px; color: #6f7079; line-height: 1.6; }

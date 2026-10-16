@@ -52,18 +52,53 @@ jobs:
       - name: Build whisper-cli (static)
         run: bash scripts/prepare-mac.sh whisper
 
-      - name: Download whisper model (1.5GB)
-        run: bash scripts/prepare-mac.sh model
+      # 精简 JRE（jlink）冒烟测试：真正拉起后端并请求接口，防止缺模块到客户机上才发现
+      - name: Smoke test (slim JRE boots backend)
+        run: |
+          set -e
+          JRE="$PWD/dist-resources/backend/jre/bin/java"
+          mkdir -p "$RUNNER_TEMP/ktv-smoke"
+          "$JRE" -jar "$PWD/dist-resources/backend/ktv-server.jar" \
+            --server.address=127.0.0.1 --server.port=8799 \
+            --ktv.data-dir="$RUNNER_TEMP/ktv-smoke/data" \
+            --ktv.bin-dir="$PWD/dist-resources/bin" \
+            --ktv.models-dir="$RUNNER_TEMP/ktv-smoke/models" \
+            > "$RUNNER_TEMP/ktv-smoke/server.log" 2>&1 &
+          SERVER_PID=$!
+          ok=""
+          for i in $(seq 1 45); do
+            sleep 2
+            if curl -sf -m 3 http://127.0.0.1:8799/api/system/tools > /dev/null; then ok=1; break; fi
+            if ! kill -0 $SERVER_PID 2>/dev/null; then break; fi
+          done
+          kill $SERVER_PID 2>/dev/null || true
+          if [ -z "$ok" ]; then
+            echo "!! 精简 JRE 启动后端失败，日志尾部："
+            tail -80 "$RUNNER_TEMP/ktv-smoke/server.log" || true
+            exit 1
+          fi
+          echo "== 冒烟测试通过：精简 JRE 可启动后端并响应 /api/system/tools =="
+
+      # 模型不进安装包：应用首次使用时由客户端下载（见 desktop/main.js）
 
       - name: Build DMG
         working-directory: desktop
         run: |
           npm i || (echo "npm i 失败，重试 …" && sleep 5 && npm i)
+          # 只构建本矩阵架构：package.json 不再固定 arch 列表，避免 dist/ 里出现两个 dmg 被一起上传
           npx electron-builder --mac --${{ matrix.arch }}
+
+      - name: Size report
+        run: |
+          echo "== dist/ 产物清单 =="
+          ls -lh dist/ || true
+          echo "== 内置资源体积（打包前） =="
+          du -sh dist-resources/backend dist-resources/bin 2>/dev/null || true
+          du -sh dist-resources/backend/jre dist-resources/backend/ktv-server.jar 2>/dev/null || true
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
         with:
           name: KFC-Music-${{ matrix.arch }}-dmg
-          path: dist/*.dmg
+          path: dist/*-${{ matrix.arch }}.dmg
           if-no-files-found: error

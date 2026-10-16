@@ -2,7 +2,7 @@
 # macOS 打包准备 + 出包
 # 用法：
 #   bash scripts/prepare-mac.sh all              # 本机全流程：依赖 + 构建 dmg（默认）
-#   bash scripts/prepare-mac.sh deps             # 准备全部依赖（JRE + ffmpeg + whisper + 模型）
+#   bash scripts/prepare-mac.sh deps             # 准备依赖（JRE + ffmpeg + whisper；模型改为客户端首启下载）
 #   bash scripts/prepare-mac.sh jre|ffmpeg|whisper|model|build   # 单独一步（CI 分步执行）
 # 前置：Node.js + npm；首次会在本地编译 whisper.cpp（需要 Xcode 命令行工具 / cmake）
 #      后端 jar 已放在 dist-resources/backend/ktv-server.jar（mvn package 构建，跨平台通用）
@@ -35,14 +35,28 @@ step_jre() {
     echo "已存在，跳过"
     return
   fi
-  # 优先：使用本机已安装的 JDK（CI 里由 setup-java 提供 JAVA_HOME），零网络风险
+  # 首选：jlink 精简运行时（只带 Spring Boot 所需模块，约 60MB；CI 有冒烟测试验证能真正启动后端）
+  if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/jlink" ] && [ -d "$JAVA_HOME/jmods" ]; then
+    echo "使用 jlink 生成精简运行时：$JAVA_HOME"
+    "$JAVA_HOME/bin/jlink" \
+      --add-modules java.base,java.compiler,java.desktop,java.instrument,java.logging,java.management,java.naming,java.net.http,java.prefs,java.rmi,java.scripting,java.security.jgss,java.security.sasl,java.sql,java.sql.rowset,java.transaction.xa,java.xml,java.xml.crypto,jdk.crypto.ec,jdk.jfr,jdk.unsupported,jdk.zipfs,jdk.localedata \
+      --strip-debug --no-header-files --no-man-pages --compress=2 \
+      --output "$RES/backend/jre"
+    # bin 下只保留 java 启动器（keytool / jfr 等运行时用不到）
+    find "$RES/backend/jre/bin" -type f ! -name java -delete 2>/dev/null || true
+    du -sh "$RES/backend/jre" 2>/dev/null || true
+    "$RES/backend/jre/bin/java" -version 2>&1 | head -1 || true
+    return
+  fi
+  # 次选：使用本机已安装的 JDK（CI 里由 setup-java 提供 JAVA_HOME），零网络风险
   if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
-    echo "使用已安装的 JDK 作为内置运行时：$JAVA_HOME"
+    echo "jlink 不可用，改用整份 JDK 拷贝：$JAVA_HOME"
     mkdir -p "$RES/backend/jre"
     cp -R "$JAVA_HOME"/. "$RES/backend/jre"/
-    # 精简：删掉编译/开发组件（运行时不需要，省 ~100MB）
+    # 精简：删掉编译/开发组件与多余命令（运行时只用 java，省 ~150MB）
     rm -rf "$RES/backend/jre/jmods" "$RES/backend/jre/include" "$RES/backend/jre/man" \
-           "$RES/backend/jre/lib/src.zip" 2>/dev/null || true
+           "$RES/backend/jre/lib/src.zip" "$RES/backend/jre/lib/ct.sym" 2>/dev/null || true
+    find "$RES/backend/jre/bin" -type f ! -name java -delete 2>/dev/null || true
     chmod +x "$RES/backend/jre/bin/java"
     "$RES/backend/jre/bin/java" -version 2>&1 | head -1 || true
     return
@@ -181,8 +195,10 @@ case "$MODE" in
   whisper) step_whisper ;;
   tools)   step_ffmpeg; step_whisper ;;
   model)   step_model ;;
-  deps)    step_jre; step_ffmpeg; step_whisper; step_model ;;
-  all)     step_jre; step_ffmpeg; step_whisper; step_model; step_build ;;
+  # 说明：语音识别模型不在安装包内——应用首次使用时在客户端下载（见 desktop/main.js）。
+  #       只有制作「离线包」时才手动执行：bash scripts/prepare-mac.sh model
+  deps)    step_jre; step_ffmpeg; step_whisper ;;
+  all)     step_jre; step_ffmpeg; step_whisper; step_build ;;
   build)   step_build ;;
   *)       echo "未知模式: ${MODE}（可用：all | deps | jre | ffmpeg | whisper | model | build）"; exit 1 ;;
 esac

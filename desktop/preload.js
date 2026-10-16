@@ -25,4 +25,13 @@ contextBridge.exposeInMainWorld('ktv', {
     ipcRenderer.removeAllListeners('app:undo');
     ipcRenderer.on('app:undo', () => callback());
   },
+
+  /** 语音识别模型（不进安装包，首次使用时在应用内下载） */
+  modelStatus: () => ipcRenderer.invoke('model:status'),
+  modelDownload: () => ipcRenderer.invoke('model:download'),
+  modelCancel: () => ipcRenderer.invoke('model:cancel'),
+  onModelProgress: (callback) => {
+    ipcRenderer.removeAllListeners('model:progress');
+    ipcRenderer.on('model:progress', (_event, info) => callback(info));
+  },
 });

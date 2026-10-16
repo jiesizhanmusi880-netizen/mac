@@ -2739,6 +2739,111 @@ function clampClipLayoutToDuration() {
   }
 }
 
+/* ================= 语音识别模型（首次使用下载，模型不进安装包） ================= */
+
+let modelGateDismissed = false;      // 点过「稍后再说」后，本次启动不再自动弹
+
+/** 顶部「识别器」徽标：实时反映 ffmpeg / 识别器（含模型）状态 */
+async function refreshToolBadge() {
+  const badge = el('toolStatus');
+  try {
+    const tools = await api('GET', '/api/system/tools');
+    if (!badge) return;
+    if (tools.ffmpegReady && tools.whisperReady) {
+      badge.textContent = '本机识别器就绪 · ' + (tools.whisperBackend || '');
+      badge.className = 'badge badge-ok';
+    } else {
+      badge.textContent = '缺少：' + (!tools.ffmpegReady ? 'ffmpeg ' : '') + (!tools.whisperReady ? '识别器' : '');
+      badge.className = 'badge badge-err';
+    }
+  } catch (err) {
+    if (badge) { badge.textContent = '后端未启动'; badge.className = 'badge badge-err'; }
+  }
+}
+
+function fmtMB(bytes) {
+  return (bytes / 1048576).toFixed(0) + ' MB';
+}
+
+/** 模型状态 → 面板（文案 / 进度条 / 按钮） */
+function renderModelGate(st) {
+  if (!st) return;
+  const bar = el('modelProgressBar');
+  const meta = el('modelGateMeta');
+  const start = el('btnModelStart');
+  const hint = el('modelGateHint');
+  if (st.ready) {
+    if (bar) bar.style.width = '100%';
+    if (meta) meta.textContent = '模型已就绪（' + fmtMB(st.size) + '）';
+    if (start) { start.textContent = '已完成'; start.disabled = true; }
+    if (hint) hint.textContent = '';
+    return;
+  }
+  if (st.downloading) {
+    const pct = st.total ? Math.min(100, (st.downloaded / st.total) * 100) : 0;
+    if (bar) bar.style.width = pct.toFixed(1) + '%';
+    if (meta) {
+      meta.textContent = '正在下载 ' + fmtMB(st.downloaded)
+        + (st.total ? ' / ' + fmtMB(st.total) + '（' + pct.toFixed(0) + '%）' : '…');
+    }
+    if (start) { start.textContent = '下载中…'; start.disabled = true; }
+    if (hint) hint.textContent = '下载中断也没关系：已下载部分会保留，重试时自动续传。';
+    return;
+  }
+  if (bar) bar.style.width = (!st.error && st.size > 0) ? Math.min(99, (st.size / 1.55e9) * 100).toFixed(1) + '%' : '0%';
+  if (start) {
+    start.textContent = st.error ? '重试下载' : (st.size > 0 ? '继续下载' : '开始下载');
+    start.disabled = false;
+  }
+  if (meta) {
+    meta.textContent = st.error ? st.error
+      : (st.size > 0 ? '已下载 ' + fmtMB(st.size) + '（未完成，可继续）' : '等待开始 · 约 1.5GB');
+  }
+  if (hint) hint.textContent = '下载一次即可，之后永久离线可用；也可「稍后再说」，先编辑视频。';
+}
+
+function showModelGate() {
+  const gate = el('modelGate');
+  if (gate) gate.classList.remove('hidden');
+}
+
+function hideModelGate() {
+  const gate = el('modelGate');
+  if (gate) gate.classList.add('hidden');
+}
+
+/** 查询模型状态；auto=true 且未就绪时自动弹出下载引导（开发模式不引导） */
+async function refreshModelGate(auto) {
+  if (!(window.ktv && window.ktv.modelStatus)) return null;
+  let st = null;
+  try { st = await window.ktv.modelStatus(); } catch (err) { return null; }
+  if (!st || !st.packaged) return st;
+  renderModelGate(st);
+  if (st.ready) { hideModelGate(); return st; }
+  if (auto && !modelGateDismissed) showModelGate();
+  return st;
+}
+
+function bindModelGate() {
+  if (!(window.ktv && window.ktv.modelStatus)) return;
+  on('btnModelStart', 'click', async () => {
+    const r = await window.ktv.modelDownload();
+    if (r && !r.started && r.reason && r.reason !== '模型已就绪') toast(r.reason, 'err');
+  });
+  on('btnModelLater', 'click', () => { modelGateDismissed = true; hideModelGate(); });
+  if (window.ktv.onModelProgress) {
+    window.ktv.onModelProgress((st) => {
+      renderModelGate(st);
+      if (st.done || st.ready) {
+        toast('语音识别模型已就绪 ✓', 'ok');
+        modelGateDismissed = false;
+        setTimeout(hideModelGate, 1200);
+        refreshToolBadge();
+      }
+    });
+  }
+}
+
 /* ================= 初始化 ================= */
 
 async function init() {
@@ -2751,21 +2856,14 @@ async function init() {
       }
     } catch (err) { /* 桥接不可用时沿用默认地址 */ }
   }
-  try {
-    const tools = await api('GET', '/api/system/tools');
-    const badge = el('toolStatus');
-    if (badge) {
-      if (tools.ffmpegReady && tools.whisperReady) {
-        badge.textContent = '本机识别器就绪 · ' + (tools.whisperBackend || '');
-        badge.className = 'badge badge-ok';
-      } else {
-        badge.textContent = '缺少：' + (!tools.ffmpegReady ? 'ffmpeg ' : '') + (!tools.whisperReady ? '识别器' : '');
-        badge.className = 'badge badge-err';
-      }
-    }
-  } catch (err) {
-    const badge = el('toolStatus');
-    if (badge) { badge.textContent = '后端未启动'; badge.className = 'badge badge-err'; }
+  await refreshToolBadge();
+  bindModelGate();
+  await refreshModelGate(true);       // 打包模式：模型未下载时弹出首次下载引导
+  const toolBadge = el('toolStatus');
+  if (toolBadge) {
+    toolBadge.title = '点击查看语音识别模型状态 / 下载';
+    toolBadge.style.cursor = 'pointer';
+    toolBadge.addEventListener('click', () => { refreshModelGate(false); showModelGate(); });
   }
 
   await loadProjects();
