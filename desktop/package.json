@@ -16,6 +16,7 @@
   "build": {
     "appId": "com.kfcmusic.app",
     "productName": "KFC Music",
+    "afterPack": "build/after-pack.js",
     "compression": "maximum",
     "electronLanguages": ["zh-CN", "en-US"],
     "directories": {
