@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, screen } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const net = require('net');
@@ -161,11 +161,16 @@ function stopBackend() {
 }
 
 function createWindow() {
+  // 窗口尺寸按屏幕工作区适配：默认 1500×940 在小屏 Mac 上会超出屏幕，
+  // 导致右侧面板（歌词模板等）和底部轨道区落在屏幕外，看起来像"按钮不显示"。
+  const work = screen.getPrimaryDisplay().workAreaSize;
+  const winWidth = Math.min(1500, Math.max(1024, work.width - 40));
+  const winHeight = Math.min(940, Math.max(640, work.height - 50));
   mainWindow = new BrowserWindow({
-    width: 1500,
-    height: 940,
-    minWidth: 1180,
-    minHeight: 760,
+    width: winWidth,
+    height: winHeight,
+    minWidth: Math.min(1180, work.width - 20),
+    minHeight: Math.min(700, work.height - 40),
     backgroundColor: '#0a0a0f',
     title: 'KFC Music · 歌词字幕视频制作',
     autoHideMenuBar: true,

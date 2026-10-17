@@ -2820,7 +2820,13 @@ async function refreshModelGate(auto) {
   if (!st || !st.packaged) return st;
   renderModelGate(st);
   if (st.ready) { hideModelGate(); return st; }
-  if (auto && !modelGateDismissed) showModelGate();
+  if (auto && !modelGateDismissed) {
+    // 不自动遮挡界面：模型未下载时只在顶部徽标高亮 + 提示一次，
+    // 用户点「识别器」徽标再打开下载面板（避免整屏被遮罩盖住、看起来像按钮全是灰的）
+    const badge = el('toolStatus');
+    if (badge) badge.classList.add('attention');
+    toast('语音识别模型未下载（约 1.5GB）：点顶部「识别器」徽标即可下载，也可先编辑视频', 'err');
+  }
   return st;
 }
 
@@ -2842,6 +2848,10 @@ function bindModelGate() {
       }
     });
   }
+  // Esc 关闭下载面板（防止遮罩盖住界面时无处可退）
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideModelGate();
+  });
 }
 
 /* ================= 初始化 ================= */
@@ -2863,7 +2873,11 @@ async function init() {
   if (toolBadge) {
     toolBadge.title = '点击查看语音识别模型状态 / 下载';
     toolBadge.style.cursor = 'pointer';
-    toolBadge.addEventListener('click', () => { refreshModelGate(false); showModelGate(); });
+    toolBadge.addEventListener('click', () => {
+      toolBadge.classList.remove('attention');
+      refreshModelGate(false);
+      showModelGate();
+    });
   }
 
   await loadProjects();

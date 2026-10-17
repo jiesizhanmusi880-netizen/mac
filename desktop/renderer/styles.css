@@ -126,7 +126,8 @@ input[type="range"].seek-hidden { display: none; }
 /* ============ 三栏工作区 ============ */
 .workspace {
   display: grid;
-  grid-template-columns: 300px 1fr 300px;
+  /* 中列用 minmax(0,1fr)：允许中间播放器被压缩，避免内容把右栏挤出视口 */
+  grid-template-columns: 300px minmax(0, 1fr) 300px;
   gap: 8px;
   padding: 8px;
   min-height: 0;
@@ -764,3 +765,10 @@ body.marquee-active, body.marquee-active * { cursor: crosshair !important; user-
 .model-actions { margin-top: 14px; display: flex; gap: 10px; }
 .model-actions .small { padding: 6px 16px; }
 .model-hint { margin-top: 10px; font-size: 11px; color: #6f7079; line-height: 1.6; }
+
+/* 模型未下载时徽标脉冲（不遮挡界面，点徽标才打开下载面板） */
+.badge.attention { animation: badge-pulse 1.4s ease-in-out infinite; }
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 196, 73, .55); }
+  50% { box-shadow: 0 0 0 5px rgba(255, 196, 73, 0); }
+}
